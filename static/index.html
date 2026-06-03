@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Simulateur de negociation</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="Simulation de negociation">
+        <aside class="setup-panel">
+          <div>
+            <p class="eyebrow">Direction vs negociateur</p>
+            <h1>Simulateur de negociation</h1>
+          </div>
+
+          <label class="field">
+            <span>Sujet</span>
+            <textarea id="topic" rows="5" placeholder="Ex: augmentation generale, temps de travail, teletravail..."></textarea>
+          </label>
+
+          <label class="field">
+            <span>Accord PDF optionnel</span>
+            <input id="agreement" type="file" accept="application/pdf" />
+          </label>
+
+          <div class="voice-panel" aria-label="Lecture vocale">
+            <label class="toggle-field">
+              <input id="auto-read" type="checkbox" checked />
+              <span>Lire les reponses</span>
+            </label>
+
+            <label class="field">
+              <span>Voix</span>
+              <select id="voice"></select>
+            </label>
+
+            <button id="stop-voice" class="secondary-action" type="button">Arreter la lecture</button>
+          </div>
+
+          <section class="cost-panel" aria-label="Cout de la session">
+            <div class="cost-panel-header">
+              <span>Cout session</span>
+              <strong id="cost-usd">$0.000000</strong>
+            </div>
+            <dl class="cost-grid">
+              <div>
+                <dt>Appels</dt>
+                <dd id="cost-calls">0</dd>
+              </div>
+              <div>
+                <dt>Input</dt>
+                <dd id="cost-input">0</dd>
+              </div>
+              <div>
+                <dt>Output</dt>
+                <dd id="cost-output">0</dd>
+              </div>
+              <div>
+                <dt>Total tokens</dt>
+                <dd id="cost-total">0</dd>
+              </div>
+            </dl>
+          </section>
+
+          <button id="reset" type="button">Reinitialiser</button>
+        </aside>
+
+        <section class="conversation-panel">
+          <div id="messages" class="messages" aria-live="polite">
+            <article class="message assistant">
+              <strong>Direction</strong>
+              <p>Indiquez un sujet, ajoutez un accord si utile, puis avancez votre premier argument.</p>
+            </article>
+          </div>
+
+          <form id="negotiation-form" class="composer">
+            <label class="field">
+              <span>Votre argument</span>
+              <textarea id="argument" rows="4" placeholder="Exposez votre demande ou votre contre-proposition..."></textarea>
+            </label>
+            <div class="composer-actions">
+              <button id="microphone" class="secondary-action" type="button" aria-pressed="false">
+                Demarrer le micro
+              </button>
+              <p id="microphone-status" class="microphone-status" role="status"></p>
+              <button id="send" type="submit">Envoyer l'argument</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
