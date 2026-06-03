@@ -3,32 +3,43 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Simulateur de negociation</title>
+    <title>Assistant de CODEV</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main class="app-shell">
-      <section class="workspace" aria-label="Simulation de negociation">
+      <section class="workspace" aria-label="Assistant de CODEV">
         <aside class="setup-panel">
           <div>
-            <p class="eyebrow">Direction vs negociateur</p>
-            <h1>Simulateur de negociation</h1>
+            <p class="eyebrow">Client vs developpeur</p>
+            <h1>Assistant de CODEV</h1>
           </div>
 
           <label class="field">
-            <span>Sujet</span>
-            <textarea id="topic" rows="5" placeholder="Ex: augmentation generale, temps de travail, teletravail..."></textarea>
+            <span>Evolution ou correction</span>
+            <textarea id="topic" rows="5" placeholder="Ex: ajout d'un parcours de validation, correction d'un calcul de remise..."></textarea>
           </label>
 
           <label class="field">
-            <span>Accord PDF optionnel</span>
+            <span>Interlocuteur client</span>
+            <select id="profile">
+              <option value="sales">Commercial qui n'y connait rien</option>
+              <option value="technical">Technique</option>
+              <option value="boss">Chef casse-couille qui fait semblant de comprendre</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>PDF optionnel</span>
             <input id="agreement" type="file" accept="application/pdf" />
           </label>
+
+          <button id="start" type="button">Demarrer la discussion</button>
 
           <div class="voice-panel" aria-label="Lecture vocale">
             <label class="toggle-field">
               <input id="auto-read" type="checkbox" checked />
-              <span>Lire les reponses</span>
+              <span>Lire les questions</span>
             </label>
 
             <label class="field">
@@ -70,22 +81,22 @@
         <section class="conversation-panel">
           <div id="messages" class="messages" aria-live="polite">
             <article class="message assistant">
-              <strong>Direction</strong>
-              <p>Indiquez un sujet, ajoutez un accord si utile, puis avancez votre premier argument.</p>
+              <strong>Client</strong>
+              <p>Decrivez l'evolution ou la correction, ajoutez un PDF si utile, puis demarrez la discussion.</p>
             </article>
           </div>
 
           <form id="negotiation-form" class="composer">
             <label class="field">
-              <span>Votre argument</span>
-              <textarea id="argument" rows="4" placeholder="Exposez votre demande ou votre contre-proposition..."></textarea>
+              <span>Votre reponse</span>
+              <textarea id="argument" rows="4" placeholder="Repondez a la question du client..."></textarea>
             </label>
             <div class="composer-actions">
               <button id="microphone" class="secondary-action" type="button" aria-pressed="false">
                 Demarrer le micro
               </button>
               <p id="microphone-status" class="microphone-status" role="status"></p>
-              <button id="send" type="submit">Envoyer l'argument</button>
+              <button id="send" type="submit">Envoyer la reponse</button>
             </div>
           </form>
         </section>

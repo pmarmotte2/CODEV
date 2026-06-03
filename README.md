@@ -1,7 +1,13 @@
-# Simulateur de negociation
+# Assistant de CODEV
 
-Application web locale ou le modele OpenAI joue le role de la direction.
-L'utilisateur choisit un sujet, ajoute optionnellement un accord PDF, puis avance ses arguments.
+Application web locale ou le modele OpenAI joue le role du client dans une discussion de CODEV.
+Le developpeur renseigne une evolution ou une correction en texte, ajoute optionnellement un PDF, puis laisse le client demarrer la discussion avec une premiere question sur le contenu.
+
+Le profil de l'interlocuteur client est selectionnable avant le demarrage:
+
+- commercial qui n'y connait rien
+- technique
+- chef casse-couille qui fait semblant de comprendre
 
 ## Installation
 
@@ -32,11 +38,11 @@ Ouvrir ensuite `http://127.0.0.1:8000`.
 
 Le bouton micro utilise la reconnaissance vocale native du navigateur.
 Il fonctionne surtout sur Chrome ou Edge, avec autorisation d'acces au bon micro.
-L'audio n'est pas envoye au serveur: seul le texte reconnu est ajoute au champ argument.
+L'audio n'est pas envoye au serveur: seul le texte reconnu est ajoute au champ reponse.
 
 ## Lecture vocale
 
-La lecture des reponses utilise la synthese vocale native du navigateur.
+La lecture des questions du client utilise la synthese vocale native du navigateur.
 Elle tourne localement avec les voix installees ou exposees par le navigateur.
 Le panneau de gauche permet d'activer/desactiver la lecture, de choisir une voix et d'arreter la lecture en cours.
 

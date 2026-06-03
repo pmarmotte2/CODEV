@@ -14,8 +14,40 @@ MAX_HISTORY_MESSAGES = 12
 DEFAULT_INPUT_PRICE_PER_1M = 0.15
 DEFAULT_CACHED_INPUT_PRICE_PER_1M = 0.075
 DEFAULT_OUTPUT_PRICE_PER_1M = 0.60
+CLIENT_PROFILES = {
+    "sales": {
+        "label": "Commercial",
+        "prompt": """
+Profil client: commercial non technique.
+- Tu comprends surtout les enjeux business, les delais, la promesse client et l'impact sur la vente.
+- Tu ne comprends pas les details techniques et tu demandes souvent de reformuler simplement.
+- Tu veux savoir ce qui change pour le client final, ce qui peut etre vendu, et ce qui peut mettre la relation commerciale en risque.
+- Tes questions sont concretes, parfois approximatives, mais jamais techniques.
+""".strip(),
+    },
+    "technical": {
+        "label": "Technique",
+        "prompt": """
+Profil client: interlocuteur technique.
+- Tu comprends les integrations, les donnees, les dependances, les environnements et les contraintes de production.
+- Tu poses des questions precises sur les cas limites, les impacts techniques, la robustesse, les logs, les tests et les criteres de validation.
+- Tu acceptes les explications techniques, mais tu demandes toujours le lien avec le besoin metier.
+- Tu es exigeant sans etre agressif.
+""".strip(),
+    },
+    "boss": {
+        "label": "Chef casse-couille",
+        "prompt": """
+Profil client: chef casse-couille qui fait semblant de comprendre.
+- Tu utilises parfois des mots techniques de travers pour donner l'impression que tu maitrises.
+- Tu cherches les contradictions, les zones floues, les risques de planning et les engagements implicites.
+- Tu demandes souvent si c'est vraiment maitrise, si c'est simple, et pourquoi ce n'est pas deja fait.
+- Tu restes credible et professionnel, mais ta posture est volontairement insistante et un peu penible.
+""".strip(),
+    },
+}
 
-app = FastAPI(title="Simulateur de negociation")
+app = FastAPI(title="Assistant de CODEV")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
@@ -93,29 +125,45 @@ def build_usage_report(usage: object | None) -> dict[str, int | float | str]:
     }
 
 
-def build_system_prompt(topic: str, agreement_text: str) -> str:
+def get_client_profile(profile: str) -> dict[str, str]:
+    return CLIENT_PROFILES.get(profile, CLIENT_PROFILES["sales"])
+
+
+def build_system_prompt(change_description: str, document_text: str, profile: str) -> str:
     context = (
-        f"\n\nAccord de reference extrait du PDF:\n{agreement_text}"
-        if agreement_text
-        else "\n\nAucun accord PDF n'a ete fourni."
+        f"\n\nDocument de reference extrait du PDF:\n{document_text}"
+        if document_text
+        else "\n\nAucun PDF de reference n'a ete fourni."
     )
+    description = change_description or "Aucune description texte n'a ete fournie."
+    client_profile = get_client_profile(profile)
     return f"""
-Tu joues le role de la direction dans une simulation de negociation sociale.
-Sujet de negociation: {topic}
+Tu joues le role du client dans une discussion de CODEV avec un developpeur.
+Evolution ou correction presentee par le developpeur:
+{description}
 {context}
 
+{client_profile["prompt"]}
+
 Objectif:
-- Repondre comme une direction credible, ferme mais professionnelle.
-- Contrer les arguments de l'utilisateur avec des objections concretes.
+- Te comporter comme un client metier credible, curieux et exigeant.
+- Poser des questions sur le contenu fonctionnel, les impacts, les cas limites, les risques et les criteres d'acceptation.
 - Utiliser le PDF uniquement s'il est fourni et pertinent.
-- Reconnaitre les points valables sans conceder trop vite.
-- Poser une question tactique quand cela aide a faire avancer la negociation.
+- Ne pas donner de solution technique a la place du developpeur.
+- Creuser une seule zone d'incertitude a la fois pour garder un echange naturel.
 - Rester en francais.
 
 Format de reponse:
-1. Position de la direction en 2 a 4 phrases.
-2. Contre-arguments sous forme de puces.
-3. Question ou condition de negociation.
+Reponds en 2 a 5 phrases maximum.
+Termine toujours par une question claire au developpeur.
+""".strip()
+
+
+def build_opening_prompt() -> str:
+    return """
+Commence la discussion en tant que client.
+Base-toi sur l'evolution ou la correction fournie et pose la premiere question utile au developpeur.
+Ne demande pas de salutation ni de confirmation generale.
 """.strip()
 
 
@@ -127,16 +175,17 @@ def index() -> FileResponse:
 @app.post("/api/negotiate")
 async def negotiate(
     topic: Annotated[str, Form()],
-    argument: Annotated[str, Form()],
+    argument: Annotated[str, Form()] = "",
+    profile: Annotated[str, Form()] = "sales",
     history: Annotated[str, Form()] = "[]",
     agreement: Annotated[UploadFile | None, File()] = None,
 ) -> dict[str, object]:
-    if not topic.strip():
-        raise HTTPException(status_code=400, detail="Le sujet est obligatoire.")
-    if not argument.strip():
-        raise HTTPException(status_code=400, detail="L'argument est obligatoire.")
-
-    agreement_text = extract_pdf_text(agreement)
+    document_text = extract_pdf_text(agreement)
+    if not topic.strip() and not document_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="La description ou le PDF de l'evolution/correction est obligatoire.",
+        )
 
     try:
         import json
@@ -145,13 +194,24 @@ async def negotiate(
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Historique invalide.") from exc
 
-    messages = [{"role": "system", "content": build_system_prompt(topic, agreement_text)}]
+    messages = [
+        {
+            "role": "system",
+            "content": build_system_prompt(topic.strip(), document_text, profile),
+        }
+    ]
     for item in raw_history[-MAX_HISTORY_MESSAGES:]:
         role = item.get("role")
         content = item.get("content")
         if role in {"user", "assistant"} and isinstance(content, str):
             messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": argument})
+
+    if argument.strip():
+        messages.append({"role": "user", "content": argument.strip()})
+    elif raw_history:
+        raise HTTPException(status_code=400, detail="La reponse du developpeur est obligatoire.")
+    else:
+        messages.append({"role": "user", "content": build_opening_prompt()})
 
     response = get_client().chat.completions.create(
         model=MODEL,

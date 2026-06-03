@@ -1,9 +1,11 @@
 const form = document.querySelector("#negotiation-form");
 const topicInput = document.querySelector("#topic");
+const profileInput = document.querySelector("#profile");
 const argumentInput = document.querySelector("#argument");
 const agreementInput = document.querySelector("#agreement");
 const messagesNode = document.querySelector("#messages");
 const sendButton = document.querySelector("#send");
+const startButton = document.querySelector("#start");
 const resetButton = document.querySelector("#reset");
 const microphoneButton = document.querySelector("#microphone");
 const microphoneStatus = document.querySelector("#microphone-status");
@@ -17,6 +19,7 @@ const costOutputNode = document.querySelector("#cost-output");
 const costTotalNode = document.querySelector("#cost-total");
 
 let history = [];
+let hasStarted = false;
 let recognition = null;
 let isListening = false;
 let transcriptBase = "";
@@ -42,7 +45,7 @@ function appendMessage(role, content) {
   message.className = `message ${role}`;
 
   const author = document.createElement("strong");
-  author.textContent = role === "user" ? "Vous" : role === "error" ? "Erreur" : "Direction";
+  author.textContent = role === "user" ? "Developpeur" : role === "error" ? "Erreur" : "Client";
 
   const body = document.createElement("p");
   body.textContent = content;
@@ -53,8 +56,38 @@ function appendMessage(role, content) {
 }
 
 function setLoading(isLoading) {
-  sendButton.disabled = isLoading;
-  sendButton.textContent = isLoading ? "Reponse en cours..." : "Envoyer l'argument";
+  sendButton.disabled = isLoading || !hasStarted;
+  startButton.disabled = isLoading;
+  sendButton.textContent = isLoading ? "Question en cours..." : "Envoyer la reponse";
+  startButton.textContent = isLoading ? "Client en cours..." : "Demarrer la discussion";
+}
+
+function setComposerEnabled(isEnabled) {
+  argumentInput.disabled = !isEnabled;
+  microphoneButton.disabled = !isEnabled || !recognition;
+  sendButton.disabled = !isEnabled;
+}
+
+function setSetupEnabled(isEnabled) {
+  topicInput.disabled = !isEnabled;
+  profileInput.disabled = !isEnabled;
+  agreementInput.disabled = !isEnabled;
+}
+
+function hasSourceContent() {
+  return Boolean(topicInput.value.trim() || agreementInput.files[0]);
+}
+
+function buildPayload(argument = "") {
+  const payload = new FormData();
+  payload.append("topic", topicInput.value.trim());
+  payload.append("profile", profileInput.value);
+  payload.append("argument", argument);
+  payload.append("history", JSON.stringify(history));
+  if (agreementInput.files[0]) {
+    payload.append("agreement", agreementInput.files[0]);
+  }
+  return payload;
 }
 
 function setMicrophoneStatus(message, isError = false) {
@@ -195,14 +228,14 @@ function scheduleSilenceStop() {
     }
 
     shouldAutoSubmitAfterRecognition = true;
-    setMicrophoneStatus("Silence detecte, envoi de l'argument...");
+    setMicrophoneStatus("Silence detecte, envoi de la reponse...");
     recognition.stop();
   }, SILENCE_TIMEOUT_MS);
 }
 
 function setupSpeechRecognition() {
   if (!SpeechRecognition) {
-    microphoneButton.disabled = true;
+    setComposerEnabled(false);
     setMicrophoneStatus("Reconnaissance vocale non supportee par ce navigateur.", true);
     return;
   }
@@ -252,13 +285,13 @@ function setupSpeechRecognition() {
       renderTranscript();
       if (shouldAutoSubmitAfterRecognition) {
         shouldAutoSubmitAfterRecognition = false;
-        if (topicInput.value.trim() && argumentInput.value.trim()) {
+        if (hasStarted && hasSourceContent() && argumentInput.value.trim()) {
           form.requestSubmit();
         } else {
-          setMicrophoneStatus("Texte ajoute. Renseignez le sujet avant l'envoi.", true);
+          setMicrophoneStatus("Texte ajoute. Demarrez la discussion avant l'envoi.", true);
         }
       } else {
-        setMicrophoneStatus("Texte ajoute a votre argument.");
+        setMicrophoneStatus("Texte ajoute a votre reponse.");
       }
     } else {
       setMicrophoneStatus("");
@@ -294,14 +327,69 @@ microphoneButton.addEventListener("click", () => {
   }
 });
 
+startButton.addEventListener("click", async () => {
+  if (!hasSourceContent()) {
+    appendMessage("error", "La description ou le PDF de l'evolution/correction est obligatoire.");
+    return;
+  }
+
+  if (speechSynthesizer) {
+    speechSynthesizer.cancel();
+  }
+  if (recognition && isListening) {
+    recognition.stop();
+  }
+
+  history = [];
+  hasStarted = false;
+  messagesNode.innerHTML = "";
+  argumentInput.value = "";
+  resetTranscriptState();
+  resetSessionUsage();
+  setComposerEnabled(false);
+  setLoading(true);
+
+  try {
+    const response = await fetch("/api/negotiate", {
+      method: "POST",
+      body: buildPayload(),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Erreur inconnue.");
+    }
+
+    history.push({ role: "assistant", content: data.reply });
+    hasStarted = true;
+    appendMessage("assistant", data.reply);
+    addSessionUsage(data.usage);
+    speakText(data.reply);
+    setSetupEnabled(false);
+    setComposerEnabled(true);
+  } catch (error) {
+    appendMessage("error", error.message);
+    setComposerEnabled(false);
+  } finally {
+    setLoading(false);
+    if (hasStarted) {
+      argumentInput.focus();
+    }
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const topic = topicInput.value.trim();
   const argument = argumentInput.value.trim();
 
-  if (!topic || !argument) {
-    appendMessage("error", "Le sujet et l'argument sont obligatoires.");
+  if (!hasStarted) {
+    appendMessage("error", "Demarrez la discussion pour laisser le client poser la premiere question.");
+    return;
+  }
+
+  if (!argument) {
+    appendMessage("error", "La reponse du developpeur est obligatoire.");
     return;
   }
 
@@ -313,18 +401,10 @@ form.addEventListener("submit", async (event) => {
   }
   setLoading(true);
 
-  const payload = new FormData();
-  payload.append("topic", topic);
-  payload.append("argument", argument);
-  payload.append("history", JSON.stringify(history));
-  if (agreementInput.files[0]) {
-    payload.append("agreement", agreementInput.files[0]);
-  }
-
   try {
     const response = await fetch("/api/negotiate", {
       method: "POST",
-      body: payload,
+      body: buildPayload(argument),
     });
     const data = await response.json();
 
@@ -354,15 +434,19 @@ resetButton.addEventListener("click", () => {
     recognition.stop();
   }
   history = [];
+  hasStarted = false;
   resetSessionUsage();
   topicInput.value = "";
+  profileInput.value = "sales";
   argumentInput.value = "";
   agreementInput.value = "";
   messagesNode.innerHTML = "";
   appendMessage(
     "assistant",
-    "Indiquez un sujet, ajoutez un accord si utile, puis avancez votre premier argument.",
+    "Decrivez l'evolution ou la correction, ajoutez un PDF si utile, puis demarrez la discussion.",
   );
+  setSetupEnabled(true);
+  setComposerEnabled(false);
 });
 
 stopVoiceButton.addEventListener("click", () => {
@@ -380,3 +464,4 @@ if (speechSynthesizer) {
 
 setupSpeechRecognition();
 renderSessionUsage();
+setComposerEnabled(false);

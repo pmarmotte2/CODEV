@@ -201,11 +201,13 @@ button:disabled {
   accent-color: var(--accent);
 }
 
+#start,
 #send {
   background: var(--accent);
   color: #fff;
 }
 
+#start:hover,
 #send:hover {
   background: var(--accent-dark);
 }
