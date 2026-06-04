@@ -16,6 +16,14 @@ Le fournisseur LLM est aussi selectionnable dans l'interface:
 
 ## Installation
 
+Sous Windows, lancer:
+
+```cmd
+install.bat
+```
+
+Ou manuellement:
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
@@ -33,6 +41,14 @@ Les tokens API sont saisis dans l'interface avant de demarrer la discussion.
 `OPENAI_MODEL` et `GITHUB_MODELS_MODEL` sont optionnels.
 
 ## Lancement
+
+Sous Windows:
+
+```cmd
+run.bat
+```
+
+Ou manuellement:
 
 ```powershell
 uvicorn app:app --reload
