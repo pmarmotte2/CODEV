@@ -3,7 +3,6 @@ const topicInput = document.querySelector("#topic");
 const profileInput = document.querySelector("#profile");
 const llmProviderInput = document.querySelector("#llm-provider");
 const apiTokenInput = document.querySelector("#api-token");
-const tokenHelpButton = document.querySelector("#token-help");
 const tokenHintNode = document.querySelector("#token-hint");
 const argumentInput = document.querySelector("#argument");
 const agreementInput = document.querySelector("#agreement");
@@ -105,11 +104,22 @@ function buildPayload(argument = "") {
 
 function renderProviderHelp() {
   const isGithubCopilot = llmProviderInput.value === "github_copilot";
-  tokenHelpButton.hidden = !isGithubCopilot;
   apiTokenInput.placeholder = isGithubCopilot ? "github_pat_..." : "sk-...";
-  tokenHintNode.textContent = isGithubCopilot
-    ? "Utilisez un fine-grained token GitHub avec Models en lecture."
-    : "Utilisez une cle API OpenAI.";
+  if (isGithubCopilot) {
+    tokenHintNode.textContent = "";
+    tokenHintNode.append(
+      document.createTextNode("Utilisez un fine-grained token GitHub avec Models en lecture. "),
+    );
+    const link = document.createElement("a");
+    link.href =
+      "https://github.com/settings/personal-access-tokens/new?name=CODEV%20GitHub%20Models&user_models=read";
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = "Creer le token";
+    tokenHintNode.append(link);
+  } else {
+    tokenHintNode.textContent = "Utilisez une cle API OpenAI.";
+  }
 }
 
 function setMicrophoneStatus(message, isError = false) {
