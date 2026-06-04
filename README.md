@@ -5,9 +5,14 @@ Le developpeur renseigne une evolution ou une correction en texte, ajoute option
 
 Le profil de l'interlocuteur client est selectionnable avant le demarrage:
 
-- commercial qui n'y connait rien
-- technique
-- chef casse-couille qui fait semblant de comprendre
+- Commercial
+- Technique
+- Responsable
+
+Le fournisseur LLM est aussi selectionnable dans l'interface:
+
+- OpenAI, avec une cle API OpenAI
+- Copilot GitHub, via GitHub Models avec un fine-grained token GitHub ayant `Models` en lecture
 
 ## Installation
 
@@ -20,11 +25,12 @@ pip install -r requirements.txt
 ## Configuration
 
 ```powershell
-$env:OPENAI_API_KEY="votre-cle-api"
 $env:OPENAI_MODEL="gpt-4o-mini"
+$env:GITHUB_MODELS_MODEL="openai/gpt-4.1"
 ```
 
-`OPENAI_MODEL` est optionnel. Par defaut, l'application utilise `gpt-4o-mini`.
+Les tokens API sont saisis dans l'interface avant de demarrer la discussion.
+`OPENAI_MODEL` et `GITHUB_MODELS_MODEL` sont optionnels.
 
 ## Lancement
 

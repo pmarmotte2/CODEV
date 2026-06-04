@@ -23,10 +23,35 @@
           <label class="field">
             <span>Interlocuteur client</span>
             <select id="profile">
-              <option value="sales">Commercial qui n'y connait rien</option>
+              <option value="sales">Commercial</option>
               <option value="technical">Technique</option>
-              <option value="boss">Chef casse-couille qui fait semblant de comprendre</option>
+              <option value="boss">Responsable</option>
             </select>
+          </label>
+
+          <label class="field">
+            <span>Fournisseur LLM</span>
+            <select id="llm-provider">
+              <option value="openai">OpenAI</option>
+              <option value="github_copilot">Copilot GitHub</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="token-label">
+              Token API
+              <button
+                id="token-help"
+                class="help-button"
+                type="button"
+                aria-label="Aide pour obtenir un token GitHub Models"
+                data-tooltip="Pour Copilot GitHub, creez un fine-grained token dans GitHub Settings > Developer settings > Personal access tokens avec Account permissions > Models > Read."
+              >
+                ?
+              </button>
+            </span>
+            <input id="api-token" type="password" autocomplete="off" placeholder="sk-... ou github_pat_..." />
+            <span id="token-hint" class="field-hint">Votre token est envoye au serveur local uniquement pour cet appel.</span>
           </label>
 
           <label class="field">
@@ -52,7 +77,7 @@
 
           <section class="cost-panel" aria-label="Cout de la session">
             <div class="cost-panel-header">
-              <span>Cout session</span>
+              <span>Cout estime</span>
               <strong id="cost-usd">$0.000000</strong>
             </div>
             <dl class="cost-grid">

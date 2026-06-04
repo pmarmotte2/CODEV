@@ -1,6 +1,10 @@
 const form = document.querySelector("#negotiation-form");
 const topicInput = document.querySelector("#topic");
 const profileInput = document.querySelector("#profile");
+const llmProviderInput = document.querySelector("#llm-provider");
+const apiTokenInput = document.querySelector("#api-token");
+const tokenHelpButton = document.querySelector("#token-help");
+const tokenHintNode = document.querySelector("#token-hint");
 const argumentInput = document.querySelector("#argument");
 const agreementInput = document.querySelector("#agreement");
 const messagesNode = document.querySelector("#messages");
@@ -34,6 +38,7 @@ let sessionUsage = {
   completionTokens: 0,
   totalTokens: 0,
   costUsd: 0,
+  hasUnpricedProvider: false,
 };
 
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -57,7 +62,7 @@ function appendMessage(role, content) {
 
 function setLoading(isLoading) {
   sendButton.disabled = isLoading || !hasStarted;
-  startButton.disabled = isLoading;
+  startButton.disabled = isLoading || hasStarted;
   sendButton.textContent = isLoading ? "Question en cours..." : "Envoyer la reponse";
   startButton.textContent = isLoading ? "Client en cours..." : "Demarrer la discussion";
 }
@@ -71,6 +76,8 @@ function setComposerEnabled(isEnabled) {
 function setSetupEnabled(isEnabled) {
   topicInput.disabled = !isEnabled;
   profileInput.disabled = !isEnabled;
+  llmProviderInput.disabled = !isEnabled;
+  apiTokenInput.disabled = !isEnabled;
   agreementInput.disabled = !isEnabled;
 }
 
@@ -78,16 +85,31 @@ function hasSourceContent() {
   return Boolean(topicInput.value.trim() || agreementInput.files[0]);
 }
 
+function hasApiToken() {
+  return Boolean(apiTokenInput.value.trim());
+}
+
 function buildPayload(argument = "") {
   const payload = new FormData();
   payload.append("topic", topicInput.value.trim());
   payload.append("profile", profileInput.value);
+  payload.append("llm_provider", llmProviderInput.value);
+  payload.append("api_token", apiTokenInput.value.trim());
   payload.append("argument", argument);
   payload.append("history", JSON.stringify(history));
   if (agreementInput.files[0]) {
     payload.append("agreement", agreementInput.files[0]);
   }
   return payload;
+}
+
+function renderProviderHelp() {
+  const isGithubCopilot = llmProviderInput.value === "github_copilot";
+  tokenHelpButton.hidden = !isGithubCopilot;
+  apiTokenInput.placeholder = isGithubCopilot ? "github_pat_..." : "sk-...";
+  tokenHintNode.textContent = isGithubCopilot
+    ? "Utilisez un fine-grained token GitHub avec Models en lecture."
+    : "Utilisez une cle API OpenAI.";
 }
 
 function setMicrophoneStatus(message, isError = false) {
@@ -100,7 +122,9 @@ function formatInteger(value) {
 }
 
 function renderSessionUsage() {
-  costUsdNode.textContent = `$${sessionUsage.costUsd.toFixed(6)}`;
+  costUsdNode.textContent = sessionUsage.hasUnpricedProvider
+    ? "n/a"
+    : `$${sessionUsage.costUsd.toFixed(6)}`;
   costCallsNode.textContent = formatInteger(sessionUsage.calls);
   costInputNode.textContent = formatInteger(sessionUsage.promptTokens);
   costOutputNode.textContent = formatInteger(sessionUsage.completionTokens);
@@ -118,6 +142,7 @@ function addSessionUsage(usage) {
   sessionUsage.completionTokens += usage.completion_tokens || 0;
   sessionUsage.totalTokens += usage.total_tokens || 0;
   sessionUsage.costUsd += usage.cost_usd || 0;
+  sessionUsage.hasUnpricedProvider ||= usage.provider !== "openai";
   renderSessionUsage();
 }
 
@@ -129,6 +154,7 @@ function resetSessionUsage() {
     completionTokens: 0,
     totalTokens: 0,
     costUsd: 0,
+    hasUnpricedProvider: false,
   };
   renderSessionUsage();
 }
@@ -333,6 +359,12 @@ startButton.addEventListener("click", async () => {
     return;
   }
 
+  if (!hasApiToken()) {
+    appendMessage("error", "Le token API est obligatoire pour demarrer la discussion.");
+    apiTokenInput.focus();
+    return;
+  }
+
   if (speechSynthesizer) {
     speechSynthesizer.cancel();
   }
@@ -393,6 +425,12 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  if (!hasApiToken()) {
+    appendMessage("error", "Le token API est obligatoire.");
+    apiTokenInput.focus();
+    return;
+  }
+
   appendMessage("user", argument);
   if (recognition && isListening) {
     clearSilenceTimer();
@@ -438,6 +476,8 @@ resetButton.addEventListener("click", () => {
   resetSessionUsage();
   topicInput.value = "";
   profileInput.value = "sales";
+  llmProviderInput.value = "openai";
+  apiTokenInput.value = "";
   argumentInput.value = "";
   agreementInput.value = "";
   messagesNode.innerHTML = "";
@@ -447,7 +487,10 @@ resetButton.addEventListener("click", () => {
   );
   setSetupEnabled(true);
   setComposerEnabled(false);
+  renderProviderHelp();
 });
+
+llmProviderInput.addEventListener("change", renderProviderHelp);
 
 stopVoiceButton.addEventListener("click", () => {
   if (speechSynthesizer) {
@@ -464,4 +507,5 @@ if (speechSynthesizer) {
 
 setupSpeechRecognition();
 renderSessionUsage();
+renderProviderHelp();
 setComposerEnabled(false);

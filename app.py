@@ -8,7 +8,12 @@ from openai import OpenAI
 from pypdf import PdfReader
 
 
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+GITHUB_MODELS_MODEL = os.getenv("GITHUB_MODELS_MODEL", "openai/gpt-4.1")
+GITHUB_MODELS_BASE_URL = os.getenv(
+    "GITHUB_MODELS_BASE_URL",
+    "https://models.github.ai/inference",
+)
 MAX_PDF_CHARS = 20_000
 MAX_HISTORY_MESSAGES = 12
 DEFAULT_INPUT_PRICE_PER_1M = 0.15
@@ -36,13 +41,13 @@ Profil client: interlocuteur technique.
 """.strip(),
     },
     "boss": {
-        "label": "Chef casse-couille",
+        "label": "Responsable",
         "prompt": """
-Profil client: chef casse-couille qui fait semblant de comprendre.
-- Tu utilises parfois des mots techniques de travers pour donner l'impression que tu maitrises.
+Profil client: responsable exigeant.
+- Tu connais les grands principes mais tu n'entres pas dans les details d'implementation.
 - Tu cherches les contradictions, les zones floues, les risques de planning et les engagements implicites.
 - Tu demandes souvent si c'est vraiment maitrise, si c'est simple, et pourquoi ce n'est pas deja fait.
-- Tu restes credible et professionnel, mais ta posture est volontairement insistante et un peu penible.
+- Tu restes credible et professionnel, avec une posture insistante et orientee engagement.
 """.strip(),
     },
 }
@@ -51,13 +56,39 @@ app = FastAPI(title="Assistant de CODEV")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
-def get_client() -> OpenAI:
-    if not os.getenv("OPENAI_API_KEY"):
+def get_openai_client(api_token: str) -> OpenAI:
+    token = api_token.strip() or os.getenv("OPENAI_API_KEY", "")
+    if not token:
         raise HTTPException(
-            status_code=500,
-            detail="OPENAI_API_KEY est manquante dans l'environnement.",
+            status_code=400,
+            detail="Le token API OpenAI est obligatoire.",
         )
-    return OpenAI()
+    return OpenAI(api_key=token)
+
+
+def get_github_models_client(api_token: str) -> OpenAI:
+    token = api_token.strip() or os.getenv("GITHUB_MODELS_TOKEN", "")
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail="Le token GitHub Models est obligatoire.",
+        )
+    return OpenAI(
+        api_key=token,
+        base_url=GITHUB_MODELS_BASE_URL,
+        default_headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+
+
+def get_llm_config(provider: str, api_token: str) -> tuple[OpenAI, str, str]:
+    if provider == "openai":
+        return get_openai_client(api_token), OPENAI_MODEL, "openai"
+    if provider == "github_copilot":
+        return get_github_models_client(api_token), GITHUB_MODELS_MODEL, "github_copilot"
+    raise HTTPException(status_code=400, detail="Fournisseur LLM invalide.")
 
 
 def extract_pdf_text(file: UploadFile | None) -> str:
@@ -94,7 +125,11 @@ def get_nested_usage_value(source: object, name: str) -> int:
     return value or 0
 
 
-def build_usage_report(usage: object | None) -> dict[str, int | float | str]:
+def build_usage_report(
+    usage: object | None,
+    provider: str,
+    model: str,
+) -> dict[str, int | float | str]:
     prompt_tokens = get_nested_usage_value(usage, "prompt_tokens")
     completion_tokens = get_nested_usage_value(usage, "completion_tokens")
     total_tokens = get_nested_usage_value(usage, "total_tokens")
@@ -102,21 +137,23 @@ def build_usage_report(usage: object | None) -> dict[str, int | float | str]:
     cached_prompt_tokens = get_nested_usage_value(prompt_details, "cached_tokens")
     billable_prompt_tokens = max(prompt_tokens - cached_prompt_tokens, 0)
 
-    input_price = get_price_per_1m("OPENAI_INPUT_PRICE_PER_1M", DEFAULT_INPUT_PRICE_PER_1M)
-    cached_input_price = get_price_per_1m(
-        "OPENAI_CACHED_INPUT_PRICE_PER_1M",
-        DEFAULT_CACHED_INPUT_PRICE_PER_1M,
-    )
-    output_price = get_price_per_1m("OPENAI_OUTPUT_PRICE_PER_1M", DEFAULT_OUTPUT_PRICE_PER_1M)
-
-    cost_usd = (
-        (billable_prompt_tokens * input_price)
-        + (cached_prompt_tokens * cached_input_price)
-        + (completion_tokens * output_price)
-    ) / 1_000_000
+    cost_usd = 0.0
+    if provider == "openai":
+        input_price = get_price_per_1m("OPENAI_INPUT_PRICE_PER_1M", DEFAULT_INPUT_PRICE_PER_1M)
+        cached_input_price = get_price_per_1m(
+            "OPENAI_CACHED_INPUT_PRICE_PER_1M",
+            DEFAULT_CACHED_INPUT_PRICE_PER_1M,
+        )
+        output_price = get_price_per_1m("OPENAI_OUTPUT_PRICE_PER_1M", DEFAULT_OUTPUT_PRICE_PER_1M)
+        cost_usd = (
+            (billable_prompt_tokens * input_price)
+            + (cached_prompt_tokens * cached_input_price)
+            + (completion_tokens * output_price)
+        ) / 1_000_000
 
     return {
-        "model": MODEL,
+        "provider": provider,
+        "model": model,
         "prompt_tokens": prompt_tokens,
         "cached_prompt_tokens": cached_prompt_tokens,
         "completion_tokens": completion_tokens,
@@ -177,6 +214,8 @@ async def negotiate(
     topic: Annotated[str, Form()],
     argument: Annotated[str, Form()] = "",
     profile: Annotated[str, Form()] = "sales",
+    llm_provider: Annotated[str, Form()] = "openai",
+    api_token: Annotated[str, Form()] = "",
     history: Annotated[str, Form()] = "[]",
     agreement: Annotated[UploadFile | None, File()] = None,
 ) -> dict[str, object]:
@@ -213,11 +252,15 @@ async def negotiate(
     else:
         messages.append({"role": "user", "content": build_opening_prompt()})
 
-    response = get_client().chat.completions.create(
-        model=MODEL,
+    client, model, provider = get_llm_config(llm_provider, api_token)
+    response = client.chat.completions.create(
+        model=model,
         messages=messages,
         temperature=0.7,
     )
 
     content = response.choices[0].message.content or ""
-    return {"reply": content.strip(), "usage": build_usage_report(response.usage)}
+    return {
+        "reply": content.strip(),
+        "usage": build_usage_report(response.usage, provider, model),
+    }
