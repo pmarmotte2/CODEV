@@ -6,11 +6,14 @@ const apiTokenInput = document.querySelector("#api-token");
 const tokenHintNode = document.querySelector("#token-hint");
 const argumentInput = document.querySelector("#argument");
 const agreementInput = document.querySelector("#agreement");
+const projectDocsInput = document.querySelector("#project-docs");
+const projectDocDirectoryInput = document.querySelector("#project-doc-directory");
 const messagesNode = document.querySelector("#messages");
 const sendButton = document.querySelector("#send");
 const startButton = document.querySelector("#start");
 const resetButton = document.querySelector("#reset");
 const microphoneButton = document.querySelector("#microphone");
+const helpAnswerButton = document.querySelector("#help-answer");
 const microphoneStatus = document.querySelector("#microphone-status");
 const autoReadInput = document.querySelector("#auto-read");
 const voiceSelect = document.querySelector("#voice");
@@ -49,7 +52,14 @@ function appendMessage(role, content) {
   message.className = `message ${role}`;
 
   const author = document.createElement("strong");
-  author.textContent = role === "user" ? "Developpeur" : role === "error" ? "Erreur" : "Client";
+  author.textContent =
+    role === "user"
+      ? "Developpeur"
+      : role === "error"
+        ? "Erreur"
+        : role === "helper"
+          ? "Aide"
+          : "Client";
 
   const body = document.createElement("p");
   body.textContent = content;
@@ -61,6 +71,7 @@ function appendMessage(role, content) {
 
 function setLoading(isLoading) {
   sendButton.disabled = isLoading || !hasStarted;
+  helpAnswerButton.disabled = isLoading || !hasStarted;
   startButton.disabled = isLoading || hasStarted;
   sendButton.textContent = isLoading ? "Question en cours..." : "Envoyer la reponse";
   startButton.textContent = isLoading ? "Client en cours..." : "Demarrer la discussion";
@@ -69,6 +80,7 @@ function setLoading(isLoading) {
 function setComposerEnabled(isEnabled) {
   argumentInput.disabled = !isEnabled;
   microphoneButton.disabled = !isEnabled || !recognition;
+  helpAnswerButton.disabled = !isEnabled;
   sendButton.disabled = !isEnabled;
 }
 
@@ -77,6 +89,8 @@ function setSetupEnabled(isEnabled) {
   llmProviderInput.disabled = !isEnabled;
   apiTokenInput.disabled = !isEnabled;
   agreementInput.disabled = !isEnabled;
+  projectDocsInput.disabled = !isEnabled;
+  projectDocDirectoryInput.disabled = !isEnabled;
 }
 
 function hasSourceContent() {
@@ -97,6 +111,14 @@ function buildPayload(argument = "") {
   payload.append("history", JSON.stringify(history));
   if (agreementInput.files[0]) {
     payload.append("agreement", agreementInput.files[0]);
+  }
+  for (const file of projectDocsInput.files) {
+    payload.append("project_docs", file);
+  }
+  for (const file of projectDocDirectoryInput.files) {
+    if (file.name.toLowerCase().endsWith(".md") || file.name.toLowerCase().endsWith(".markdown")) {
+      payload.append("project_docs", file);
+    }
   }
   return payload;
 }
@@ -419,6 +441,41 @@ startButton.addEventListener("click", async () => {
   }
 });
 
+helpAnswerButton.addEventListener("click", async () => {
+  if (!hasStarted) {
+    appendMessage("error", "Demarrez la discussion avant de demander de l'aide.");
+    return;
+  }
+
+  if (!hasApiToken()) {
+    appendMessage("error", "Le token API est obligatoire.");
+    apiTokenInput.focus();
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    const response = await fetch("/api/help-answer", {
+      method: "POST",
+      body: buildPayload(argumentInput.value.trim()),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Erreur inconnue.");
+    }
+
+    appendMessage("helper", data.reply);
+    addSessionUsage(data.usage);
+  } catch (error) {
+    appendMessage("error", error.message);
+  } finally {
+    setLoading(false);
+    argumentInput.focus();
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
@@ -486,6 +543,8 @@ resetButton.addEventListener("click", () => {
   topicInput.value = "";
   argumentInput.value = "";
   agreementInput.value = "";
+  projectDocsInput.value = "";
+  projectDocDirectoryInput.value = "";
   messagesNode.innerHTML = "";
   appendMessage(
     "assistant",

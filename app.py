@@ -15,6 +15,7 @@ GITHUB_MODELS_BASE_URL = os.getenv(
     "https://models.github.ai/inference",
 )
 MAX_PDF_CHARS = 20_000
+MAX_DOCUMENT_CHARS = 60_000
 MAX_HISTORY_MESSAGES = 12
 DEFAULT_INPUT_PRICE_PER_1M = 0.15
 DEFAULT_CACHED_INPUT_PRICE_PER_1M = 0.075
@@ -91,7 +92,7 @@ def get_llm_config(provider: str, api_token: str) -> tuple[OpenAI, str, str]:
     raise HTTPException(status_code=400, detail="Fournisseur LLM invalide.")
 
 
-def extract_pdf_text(file: UploadFile | None) -> str:
+def extract_pdf_text(file: UploadFile | None, max_chars: int = MAX_PDF_CHARS) -> str:
     if file is None:
         return ""
 
@@ -105,7 +106,41 @@ def extract_pdf_text(file: UploadFile | None) -> str:
         raise HTTPException(status_code=400, detail="PDF illisible ou invalide.") from exc
 
     text = "\n\n".join(page for page in pages if page)
-    return text[:MAX_PDF_CHARS]
+    return text[:max_chars]
+
+
+async def extract_project_document_text(files: list[UploadFile] | None) -> str:
+    if not files:
+        return ""
+
+    sections: list[str] = []
+    remaining_chars = MAX_DOCUMENT_CHARS
+    for file in files:
+        if remaining_chars <= 0:
+            break
+
+        filename = file.filename or "document"
+        lowered = filename.lower()
+        text = ""
+
+        if lowered.endswith(".pdf"):
+            file.file.seek(0)
+            text = extract_pdf_text(file, remaining_chars)
+        elif lowered.endswith((".md", ".markdown")):
+            raw_content = await file.read()
+            text = raw_content.decode("utf-8", errors="replace")
+        else:
+            continue
+
+        text = text.strip()
+        if not text:
+            continue
+
+        section = f"Document: {filename}\n{text[:remaining_chars]}"
+        sections.append(section)
+        remaining_chars -= len(section)
+
+    return "\n\n---\n\n".join(sections)
 
 
 def get_price_per_1m(name: str, default: float) -> float:
@@ -166,11 +201,21 @@ def get_client_profile(profile: str) -> dict[str, str]:
     return CLIENT_PROFILES.get(profile, CLIENT_PROFILES["sales"])
 
 
-def build_system_prompt(change_description: str, document_text: str, profile: str) -> str:
-    context = (
-        f"\n\nDocument de reference extrait du PDF:\n{document_text}"
-        if document_text
-        else "\n\nAucun PDF de reference n'a ete fourni."
+def build_system_prompt(
+    change_description: str,
+    change_document_text: str,
+    project_document_text: str,
+    profile: str,
+) -> str:
+    change_context = (
+        f"\n\nDocument de l'evolution/correction extrait du PDF:\n{change_document_text}"
+        if change_document_text
+        else "\n\nAucun PDF d'evolution/correction n'a ete fourni."
+    )
+    project_context = (
+        f"\n\nDocumentation projet disponible:\n{project_document_text}"
+        if project_document_text
+        else "\n\nAucune documentation projet n'a ete fournie."
     )
     description = change_description or "Aucune description texte n'a ete fournie."
     client_profile = get_client_profile(profile)
@@ -178,14 +223,16 @@ def build_system_prompt(change_description: str, document_text: str, profile: st
 Tu joues le role du client dans une discussion de CODEV avec un developpeur.
 Evolution ou correction presentee par le developpeur:
 {description}
-{context}
+{change_context}
+{project_context}
 
 {client_profile["prompt"]}
 
 Objectif:
 - Te comporter comme un client metier credible, curieux et exigeant.
 - Poser des questions sur le contenu fonctionnel, les impacts, les cas limites, les risques et les criteres d'acceptation.
-- Utiliser le PDF uniquement s'il est fourni et pertinent.
+- Utiliser la documentation uniquement si elle est fournie et pertinente.
+- Quand la documentation projet apporte un point utile, t'en servir pour rendre tes remarques plus precises selon ton profil.
 - Ne pas donner de solution technique a la place du developpeur.
 - Creuser une seule zone d'incertitude a la fois pour garder un echange naturel.
 - Rester en francais.
@@ -193,6 +240,43 @@ Objectif:
 Format de reponse:
 Reponds en 2 a 5 phrases maximum.
 Termine toujours par une question claire au developpeur.
+""".strip()
+
+
+def build_answer_help_prompt(
+    change_description: str,
+    change_document_text: str,
+    project_document_text: str,
+) -> str:
+    change_context = (
+        f"\n\nDocument de l'evolution/correction extrait du PDF:\n{change_document_text}"
+        if change_document_text
+        else "\n\nAucun PDF d'evolution/correction n'a ete fourni."
+    )
+    project_context = (
+        f"\n\nDocumentation projet disponible:\n{project_document_text}"
+        if project_document_text
+        else "\n\nAucune documentation projet n'a ete fournie."
+    )
+    description = change_description or "Aucune description texte n'a ete fournie."
+    return f"""
+Tu aides un developpeur a preparer sa reponse pendant une discussion de CODEV.
+Evolution ou correction:
+{description}
+{change_context}
+{project_context}
+
+Objectif:
+- Proposer une approche de reponse, sans rediger la reponse finale a sa place.
+- T'appuyer sur la documentation projet si elle est disponible et pertinente.
+- Identifier les points a clarifier, les arguments fonctionnels/techniques utiles et les risques a reconnaitre.
+- Rester concret, court et actionnable.
+- Rester en francais.
+
+Format:
+1. Angle de reponse conseille.
+2. Points a verifier dans la documentation ou dans le code.
+3. Formulations possibles, sous forme de fragments et non de reponse complete.
 """.strip()
 
 
@@ -218,9 +302,11 @@ async def negotiate(
     api_token: Annotated[str, Form()] = "",
     history: Annotated[str, Form()] = "[]",
     agreement: Annotated[UploadFile | None, File()] = None,
+    project_docs: Annotated[list[UploadFile] | None, File()] = None,
 ) -> dict[str, object]:
-    document_text = extract_pdf_text(agreement)
-    if not topic.strip() and not document_text.strip():
+    change_document_text = extract_pdf_text(agreement)
+    project_document_text = await extract_project_document_text(project_docs)
+    if not topic.strip() and not change_document_text.strip():
         raise HTTPException(
             status_code=400,
             detail="La description ou le PDF de l'evolution/correction est obligatoire.",
@@ -236,7 +322,12 @@ async def negotiate(
     messages = [
         {
             "role": "system",
-            "content": build_system_prompt(topic.strip(), document_text, profile),
+            "content": build_system_prompt(
+                topic.strip(),
+                change_document_text,
+                project_document_text,
+                profile,
+            ),
         }
     ]
     for item in raw_history[-MAX_HISTORY_MESSAGES:]:
@@ -257,6 +348,79 @@ async def negotiate(
         model=model,
         messages=messages,
         temperature=0.7,
+    )
+
+    content = response.choices[0].message.content or ""
+    return {
+        "reply": content.strip(),
+        "usage": build_usage_report(response.usage, provider, model),
+    }
+
+
+@app.post("/api/help-answer")
+async def help_answer(
+    topic: Annotated[str, Form()],
+    argument: Annotated[str, Form()] = "",
+    profile: Annotated[str, Form()] = "sales",
+    llm_provider: Annotated[str, Form()] = "openai",
+    api_token: Annotated[str, Form()] = "",
+    history: Annotated[str, Form()] = "[]",
+    agreement: Annotated[UploadFile | None, File()] = None,
+    project_docs: Annotated[list[UploadFile] | None, File()] = None,
+) -> dict[str, object]:
+    change_document_text = extract_pdf_text(agreement)
+    project_document_text = await extract_project_document_text(project_docs)
+    if not topic.strip() and not change_document_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="La description ou le PDF de l'evolution/correction est obligatoire.",
+        )
+
+    try:
+        import json
+
+        raw_history = json.loads(history)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Historique invalide.") from exc
+
+    client_profile = get_client_profile(profile)
+    messages = [
+        {
+            "role": "system",
+            "content": build_answer_help_prompt(
+                topic.strip(),
+                change_document_text,
+                project_document_text,
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Profil actuel du client: {client_profile['label']}.",
+        },
+    ]
+    for item in raw_history[-MAX_HISTORY_MESSAGES:]:
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str):
+            messages.append({"role": role, "content": content})
+
+    draft = argument.strip()
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                f"Voici mon brouillon de reponse: {draft}\nAide-moi a l'ameliorer sans repondre a ma place."
+                if draft
+                else "Aide-moi a preparer une reponse au dernier message du client sans repondre a ma place."
+            ),
+        }
+    )
+
+    client, model, provider = get_llm_config(llm_provider, api_token)
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.5,
     )
 
     content = response.choices[0].message.content or ""

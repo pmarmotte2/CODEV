@@ -46,8 +46,19 @@
           </label>
 
           <label class="field">
-            <span>PDF optionnel</span>
+            <span>PDF evolution optionnel</span>
             <input id="agreement" type="file" accept="application/pdf" />
+          </label>
+
+          <label class="field">
+            <span>Documentation projet optionnelle</span>
+            <input id="project-docs" type="file" accept=".pdf,.md,.markdown,application/pdf,text/markdown,text/plain" multiple />
+            <span class="field-hint">PDF ou fichiers Markdown du wiki projet.</span>
+          </label>
+
+          <label class="field">
+            <span>Dossier wiki Markdown</span>
+            <input id="project-doc-directory" type="file" webkitdirectory directory multiple />
           </label>
 
           <button id="start" type="button">Demarrer la discussion</button>
@@ -110,6 +121,9 @@
             <div class="composer-actions">
               <button id="microphone" class="secondary-action" type="button" aria-pressed="false">
                 Demarrer le micro
+              </button>
+              <button id="help-answer" class="secondary-action" type="button">
+                Aide-moi a repondre
               </button>
               <p id="microphone-status" class="microphone-status" role="status"></p>
               <button id="send" type="submit">Envoyer la reponse</button>

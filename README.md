@@ -2,6 +2,7 @@
 
 Application web locale ou le modele OpenAI joue le role du client dans une discussion de CODEV.
 Le developpeur renseigne une evolution ou une correction en texte, ajoute optionnellement un PDF, puis laisse le client demarrer la discussion avec une premiere question sur le contenu.
+Une documentation projet facultative peut aussi etre fournie pour enrichir les questions du client.
 
 Le profil de l'interlocuteur client est selectionnable avant le demarrage:
 
@@ -13,6 +14,9 @@ Le fournisseur LLM est aussi selectionnable dans l'interface:
 
 - OpenAI, avec une cle API OpenAI
 - Copilot GitHub, via GitHub Models avec un fine-grained token GitHub ayant `Models` en lecture
+
+La documentation projet peut etre fournie sous forme de PDF, de fichiers Markdown, ou d'un dossier wiki Markdown.
+Le bouton `Aide-moi a repondre` utilise la discussion et cette documentation pour proposer une approche de reponse au developpeur, sans repondre a sa place.
 
 ## Installation
 

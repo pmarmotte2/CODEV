@@ -291,6 +291,13 @@ button:disabled {
   color: var(--warning);
 }
 
+.message.helper {
+  align-self: center;
+  max-width: 86ch;
+  border-color: #c9d8cf;
+  background: #f2f8f4;
+}
+
 .composer {
   display: grid;
   gap: 10px;
@@ -306,7 +313,7 @@ button:disabled {
 
 .composer-actions {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
 }
