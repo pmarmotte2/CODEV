@@ -74,7 +74,6 @@ function setComposerEnabled(isEnabled) {
 
 function setSetupEnabled(isEnabled) {
   topicInput.disabled = !isEnabled;
-  profileInput.disabled = !isEnabled;
   llmProviderInput.disabled = !isEnabled;
   apiTokenInput.disabled = !isEnabled;
   agreementInput.disabled = !isEnabled;
@@ -485,9 +484,6 @@ resetButton.addEventListener("click", () => {
   hasStarted = false;
   resetSessionUsage();
   topicInput.value = "";
-  profileInput.value = "sales";
-  llmProviderInput.value = "openai";
-  apiTokenInput.value = "";
   argumentInput.value = "";
   agreementInput.value = "";
   messagesNode.innerHTML = "";
@@ -497,6 +493,7 @@ resetButton.addEventListener("click", () => {
   );
   setSetupEnabled(true);
   setComposerEnabled(false);
+  setLoading(false);
   renderProviderHelp();
 });
 
