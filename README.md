@@ -16,7 +16,15 @@ Le fournisseur LLM est aussi selectionnable dans l'interface:
 - Copilot GitHub, via GitHub Models avec un fine-grained token GitHub ayant `Models` en lecture
 
 La documentation projet peut etre fournie sous forme de PDF, de fichiers Markdown, ou d'un dossier wiki Markdown.
-Le bouton `Aide-moi a repondre` utilise la discussion et cette documentation pour proposer une approche de reponse au developpeur, sans repondre a sa place.
+Elle est indexee une fois dans une session documentaire locale, puis seuls les extraits utiles sont injectes dans les prompts.
+Le bouton `Aide-moi a repondre` utilise la discussion et cette session documentaire pour proposer une approche de reponse au developpeur, sans repondre a sa place.
+
+La session documentaire utilise une recherche hybride:
+
+- embeddings `text-embedding-3-small` avec OpenAI
+- embeddings `openai/text-embedding-3-small` avec Copilot GitHub via GitHub Models
+- score lexical local pour conserver les correspondances exactes sur les noms d'ecrans, champs, erreurs et acronymes
+- index vectoriel Python integre, accelere automatiquement par `turbovec` si l'installation optionnelle reussit
 
 ## Installation
 

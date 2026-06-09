@@ -41,6 +41,13 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo [CODEV] Installation optionnelle de l'acceleration vectorielle...
+call ".venv\Scripts\pip.exe" install numpy turbovec
+if errorlevel 1 (
+  echo [INFO] turbovec n'a pas pu etre installe sur ce poste.
+  echo [INFO] CODEV utilisera la recherche vectorielle Python integree.
+)
+
 echo.
 echo [CODEV] Installation terminee.
 echo Lancez run.bat pour demarrer l'application.

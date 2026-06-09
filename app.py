@@ -1,4 +1,8 @@
 import os
+import re
+import uuid
+from collections import Counter
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -14,8 +18,17 @@ GITHUB_MODELS_BASE_URL = os.getenv(
     "GITHUB_MODELS_BASE_URL",
     "https://models.github.ai/inference",
 )
+OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+GITHUB_MODELS_EMBEDDING_MODEL = os.getenv(
+    "GITHUB_MODELS_EMBEDDING_MODEL",
+    "openai/text-embedding-3-small",
+)
 MAX_PDF_CHARS = 20_000
 MAX_DOCUMENT_CHARS = 60_000
+MAX_DOCUMENT_SESSION_CHARS = 500_000
+DOCUMENT_CHUNK_CHARS = 1_200
+DOCUMENT_CHUNK_OVERLAP = 180
+MAX_RETRIEVED_DOCUMENT_CHUNKS = 6
 MAX_HISTORY_MESSAGES = 12
 DEFAULT_INPUT_PRICE_PER_1M = 0.15
 DEFAULT_CACHED_INPUT_PRICE_PER_1M = 0.075
@@ -52,9 +65,28 @@ Profil client: responsable exigeant.
 """.strip(),
     },
 }
+TOKEN_PATTERN = re.compile(r"\w{3,}", re.UNICODE)
+DOCUMENT_SESSIONS: dict[str, "DocumentSession"] = {}
 
 app = FastAPI(title="Assistant de CODEV")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@dataclass
+class DocumentChunk:
+    source: str
+    text: str
+    terms: Counter[str]
+    vector: list[float]
+
+
+@dataclass
+class DocumentSession:
+    session_id: str
+    chunks: list[DocumentChunk]
+    source_count: int
+    retrieval_mode: str
+    vector_index: object | None = None
 
 
 def get_openai_client(api_token: str) -> OpenAI:
@@ -79,7 +111,7 @@ def get_github_models_client(api_token: str) -> OpenAI:
         base_url=GITHUB_MODELS_BASE_URL,
         default_headers={
             "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
+            "X-GitHub-Api-Version": "2026-03-10",
         },
     )
 
@@ -90,6 +122,53 @@ def get_llm_config(provider: str, api_token: str) -> tuple[OpenAI, str, str]:
     if provider == "github_copilot":
         return get_github_models_client(api_token), GITHUB_MODELS_MODEL, "github_copilot"
     raise HTTPException(status_code=400, detail="Fournisseur LLM invalide.")
+
+
+def get_embedding_config(provider: str, api_token: str) -> tuple[OpenAI, str, str]:
+    if provider == "openai":
+        return get_openai_client(api_token), OPENAI_EMBEDDING_MODEL, "openai"
+    if provider == "github_copilot":
+        return get_github_models_client(api_token), GITHUB_MODELS_EMBEDDING_MODEL, "github_copilot"
+    raise HTTPException(status_code=400, detail="Fournisseur LLM invalide.")
+
+
+def get_embedding_vectors(client: OpenAI, model: str, texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
+
+    response = client.embeddings.create(model=model, input=texts)
+    return [item.embedding for item in response.data]
+
+
+def normalize_vector(vector: list[float]) -> list[float]:
+    norm = sum(value * value for value in vector) ** 0.5
+    if norm == 0:
+        return vector
+    return [value / norm for value in vector]
+
+
+def dot_product(left: list[float], right: list[float]) -> float:
+    return sum(a * b for a, b in zip(left, right))
+
+
+def build_optional_turbovec_index(vectors: list[list[float]]) -> tuple[object | None, str]:
+    if not vectors:
+        return None, "vector"
+
+    try:
+        import numpy as np
+        from turbovec import IdMapIndex
+    except Exception:
+        return None, "vector"
+
+    try:
+        vector_array = np.asarray(vectors, dtype=np.float32)
+        ids = np.arange(len(vectors), dtype=np.uint64)
+        index = IdMapIndex(dim=len(vectors[0]), bit_width=4)
+        index.add_with_ids(vector_array, ids)
+        return index, "turbovec"
+    except Exception:
+        return None, "vector"
 
 
 def extract_pdf_text(file: UploadFile | None, max_chars: int = MAX_PDF_CHARS) -> str:
@@ -140,6 +219,219 @@ async def extract_project_document_text(files: list[UploadFile] | None) -> str:
         sections.append(section)
         remaining_chars -= len(section)
 
+    return "\n\n---\n\n".join(sections)
+
+
+def tokenize(text: str) -> list[str]:
+    return [match.group(0).lower() for match in TOKEN_PATTERN.finditer(text)]
+
+
+def chunk_text(text: str) -> list[str]:
+    clean_text = re.sub(r"\n{3,}", "\n\n", text.strip())
+    if not clean_text:
+        return []
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(clean_text):
+        end = min(start + DOCUMENT_CHUNK_CHARS, len(clean_text))
+        if end < len(clean_text):
+            paragraph_break = clean_text.rfind("\n\n", start, end)
+            if paragraph_break > start + 300:
+                end = paragraph_break
+        chunk = clean_text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        if end >= len(clean_text):
+            break
+        start = max(end - DOCUMENT_CHUNK_OVERLAP, start + 1)
+    return chunks
+
+
+async def read_project_document(file: UploadFile, max_chars: int) -> tuple[str, str]:
+    filename = file.filename or "document"
+    lowered = filename.lower()
+
+    if lowered.endswith(".pdf"):
+        file.file.seek(0)
+        return filename, extract_pdf_text(file, max_chars)
+    if lowered.endswith((".md", ".markdown")):
+        raw_content = await file.read()
+        return filename, raw_content.decode("utf-8", errors="replace")[:max_chars]
+    return filename, ""
+
+
+async def build_document_session(
+    files: list[UploadFile] | None,
+    llm_provider: str,
+    api_token: str,
+) -> DocumentSession:
+    if not files:
+        raise HTTPException(status_code=400, detail="Aucune documentation projet fournie.")
+
+    chunk_sources: list[str] = []
+    chunk_texts: list[str] = []
+    chunk_terms: list[Counter[str]] = []
+    source_names: set[str] = set()
+    remaining_chars = MAX_DOCUMENT_SESSION_CHARS
+
+    for file in files:
+        if remaining_chars <= 0:
+            break
+
+        source, text = await read_project_document(file, remaining_chars)
+        text = text.strip()
+        if not text:
+            continue
+
+        source_names.add(source)
+        remaining_chars -= len(text)
+        for chunk in chunk_text(text):
+            terms = Counter(tokenize(f"{source}\n{chunk}"))
+            if terms:
+                chunk_sources.append(source)
+                chunk_texts.append(chunk)
+                chunk_terms.append(terms)
+
+    if not chunk_texts:
+        raise HTTPException(
+            status_code=400,
+            detail="Aucun contenu exploitable trouve dans la documentation projet.",
+        )
+
+    client, embedding_model, _ = get_embedding_config(llm_provider, api_token)
+    try:
+        raw_vectors = get_embedding_vectors(
+            client,
+            embedding_model,
+            [f"{source}\n{text}" for source, text in zip(chunk_sources, chunk_texts)],
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Impossible de generer les embeddings de la documentation: {exc}",
+        ) from exc
+
+    vectors = [normalize_vector(vector) for vector in raw_vectors]
+    if not vectors:
+        raise HTTPException(
+            status_code=400,
+            detail="Aucun embedding genere pour la documentation projet.",
+        )
+
+    chunks = [
+        DocumentChunk(source=source, text=text, terms=terms, vector=vector)
+        for source, text, terms, vector in zip(chunk_sources, chunk_texts, chunk_terms, vectors)
+    ]
+    vector_index, retrieval_mode = build_optional_turbovec_index(vectors)
+
+    session_id = str(uuid.uuid4())
+    session = DocumentSession(
+        session_id=session_id,
+        chunks=chunks,
+        source_count=len(source_names),
+        retrieval_mode=retrieval_mode,
+        vector_index=vector_index,
+    )
+    DOCUMENT_SESSIONS[session_id] = session
+    return session
+
+
+def score_lexical_chunks(session: DocumentSession, query_terms: Counter[str]) -> dict[int, float]:
+    scores: dict[int, float] = {}
+    if not query_terms:
+        return scores
+
+    for index, chunk in enumerate(session.chunks):
+        overlap = query_terms.keys() & chunk.terms.keys()
+        if not overlap:
+            continue
+        score = sum(query_terms[term] * chunk.terms[term] for term in overlap)
+        scores[index] = score / max(sum(chunk.terms.values()), 1)
+    return scores
+
+
+def score_vector_chunks(
+    session: DocumentSession,
+    query_vector: list[float],
+) -> dict[int, float]:
+    if not query_vector:
+        return {}
+
+    if session.vector_index is not None:
+        try:
+            import numpy as np
+
+            query_array = np.asarray([query_vector], dtype=np.float32)
+            _, ids = session.vector_index.search(
+                query_array,
+                k=min(MAX_RETRIEVED_DOCUMENT_CHUNKS * 3, len(session.chunks)),
+            )
+            raw_ids = ids[0] if getattr(ids, "ndim", 1) > 1 else ids
+            return {
+                int(chunk_id): dot_product(query_vector, session.chunks[int(chunk_id)].vector)
+                for chunk_id in raw_ids
+                if 0 <= int(chunk_id) < len(session.chunks)
+            }
+        except Exception:
+            pass
+
+    return {
+        index: dot_product(query_vector, chunk.vector)
+        for index, chunk in enumerate(session.chunks)
+    }
+
+
+def retrieve_project_context(
+    document_session_id: str,
+    query: str,
+    llm_provider: str,
+    api_token: str,
+) -> str:
+    if not document_session_id:
+        return ""
+
+    session = DOCUMENT_SESSIONS.get(document_session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Session documentaire inconnue. Rechargez la documentation projet.",
+        )
+
+    query_terms = Counter(tokenize(query))
+    if not query_terms:
+        selected_chunks = session.chunks[: min(MAX_RETRIEVED_DOCUMENT_CHUNKS, len(session.chunks))]
+    else:
+        client, embedding_model, _ = get_embedding_config(llm_provider, api_token)
+        try:
+            query_vector = normalize_vector(get_embedding_vectors(client, embedding_model, [query])[0])
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Impossible de generer l'embedding de recherche documentaire: {exc}",
+            ) from exc
+
+        lexical_scores = score_lexical_chunks(session, query_terms)
+        vector_scores = score_vector_chunks(session, query_vector)
+        combined_scores: dict[int, float] = {}
+        for index in set(lexical_scores) | set(vector_scores):
+            combined_scores[index] = (
+                (0.35 * lexical_scores.get(index, 0.0))
+                + (0.65 * vector_scores.get(index, 0.0))
+            )
+        scored_chunks = sorted(
+            ((score, session.chunks[index]) for index, score in combined_scores.items()),
+            key=lambda item: item[0],
+            reverse=True,
+        )
+        selected_chunks = [
+            chunk for _, chunk in scored_chunks[:MAX_RETRIEVED_DOCUMENT_CHUNKS]
+        ] or session.chunks[: min(3, len(session.chunks))]
+
+    sections = [
+        f"Source: {chunk.source}\n{chunk.text}"
+        for chunk in selected_chunks
+    ]
     return "\n\n---\n\n".join(sections)
 
 
@@ -293,6 +585,21 @@ def index() -> FileResponse:
     return FileResponse("static/index.html")
 
 
+@app.post("/api/document-session")
+async def create_document_session(
+    llm_provider: Annotated[str, Form()] = "openai",
+    api_token: Annotated[str, Form()] = "",
+    project_docs: Annotated[list[UploadFile] | None, File()] = None,
+) -> dict[str, object]:
+    session = await build_document_session(project_docs, llm_provider, api_token)
+    return {
+        "document_session_id": session.session_id,
+        "chunks": len(session.chunks),
+        "sources": session.source_count,
+        "retrieval_mode": session.retrieval_mode,
+    }
+
+
 @app.post("/api/negotiate")
 async def negotiate(
     topic: Annotated[str, Form()],
@@ -301,11 +608,11 @@ async def negotiate(
     llm_provider: Annotated[str, Form()] = "openai",
     api_token: Annotated[str, Form()] = "",
     history: Annotated[str, Form()] = "[]",
+    document_session_id: Annotated[str, Form()] = "",
     agreement: Annotated[UploadFile | None, File()] = None,
     project_docs: Annotated[list[UploadFile] | None, File()] = None,
 ) -> dict[str, object]:
     change_document_text = extract_pdf_text(agreement)
-    project_document_text = await extract_project_document_text(project_docs)
     if not topic.strip() and not change_document_text.strip():
         raise HTTPException(
             status_code=400,
@@ -318,6 +625,26 @@ async def negotiate(
         raw_history = json.loads(history)
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Historique invalide.") from exc
+
+    retrieval_query = "\n".join(
+        [
+            topic.strip(),
+            argument.strip() or build_opening_prompt(),
+            *[
+                item.get("content", "")
+                for item in raw_history[-4:]
+                if isinstance(item, dict) and isinstance(item.get("content"), str)
+            ],
+        ]
+    )
+    project_document_text = retrieve_project_context(
+        document_session_id,
+        retrieval_query,
+        llm_provider,
+        api_token,
+    )
+    if not project_document_text and project_docs:
+        project_document_text = await extract_project_document_text(project_docs)
 
     messages = [
         {
@@ -365,11 +692,11 @@ async def help_answer(
     llm_provider: Annotated[str, Form()] = "openai",
     api_token: Annotated[str, Form()] = "",
     history: Annotated[str, Form()] = "[]",
+    document_session_id: Annotated[str, Form()] = "",
     agreement: Annotated[UploadFile | None, File()] = None,
     project_docs: Annotated[list[UploadFile] | None, File()] = None,
 ) -> dict[str, object]:
     change_document_text = extract_pdf_text(agreement)
-    project_document_text = await extract_project_document_text(project_docs)
     if not topic.strip() and not change_document_text.strip():
         raise HTTPException(
             status_code=400,
@@ -384,6 +711,27 @@ async def help_answer(
         raise HTTPException(status_code=400, detail="Historique invalide.") from exc
 
     client_profile = get_client_profile(profile)
+    retrieval_query = "\n".join(
+        [
+            topic.strip(),
+            argument.strip(),
+            client_profile["label"],
+            *[
+                item.get("content", "")
+                for item in raw_history[-4:]
+                if isinstance(item, dict) and isinstance(item.get("content"), str)
+            ],
+        ]
+    )
+    project_document_text = retrieve_project_context(
+        document_session_id,
+        retrieval_query,
+        llm_provider,
+        api_token,
+    )
+    if not project_document_text and project_docs:
+        project_document_text = await extract_project_document_text(project_docs)
+
     messages = [
         {
             "role": "system",

@@ -26,6 +26,8 @@ const costTotalNode = document.querySelector("#cost-total");
 
 let history = [];
 let hasStarted = false;
+let documentSessionId = "";
+let documentSessionSignature = "";
 let recognition = null;
 let isListening = false;
 let transcriptBase = "";
@@ -101,6 +103,58 @@ function hasApiToken() {
   return Boolean(apiTokenInput.value.trim());
 }
 
+function getProjectDocumentFiles() {
+  const selectedFiles = [...projectDocsInput.files];
+  const directoryFiles = [...projectDocDirectoryInput.files].filter((file) => {
+    const name = file.name.toLowerCase();
+    return name.endsWith(".md") || name.endsWith(".markdown");
+  });
+  return [...selectedFiles, ...directoryFiles];
+}
+
+function getProjectDocumentSignature(files) {
+  return files
+    .map((file) => `${file.webkitRelativePath || file.name}:${file.size}:${file.lastModified}`)
+    .join("|");
+}
+
+async function ensureDocumentSession() {
+  const files = getProjectDocumentFiles();
+  if (files.length === 0) {
+    documentSessionId = "";
+    documentSessionSignature = "";
+    return;
+  }
+
+  const signature = getProjectDocumentSignature(files);
+  if (documentSessionId && documentSessionSignature === signature) {
+    return;
+  }
+
+  const payload = new FormData();
+  payload.append("llm_provider", llmProviderInput.value);
+  payload.append("api_token", apiTokenInput.value.trim());
+  for (const file of files) {
+    payload.append("project_docs", file, file.webkitRelativePath || file.name);
+  }
+
+  const response = await fetch("/api/document-session", {
+    method: "POST",
+    body: payload,
+  });
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.detail || "Documentation projet invalide.");
+  }
+
+  documentSessionId = data.document_session_id;
+  documentSessionSignature = signature;
+  setMicrophoneStatus(
+    `Documentation indexee: ${data.sources} source(s), ${data.chunks} extrait(s), mode ${data.retrieval_mode}.`,
+  );
+}
+
 function buildPayload(argument = "") {
   const payload = new FormData();
   payload.append("topic", topicInput.value.trim());
@@ -109,16 +163,9 @@ function buildPayload(argument = "") {
   payload.append("api_token", apiTokenInput.value.trim());
   payload.append("argument", argument);
   payload.append("history", JSON.stringify(history));
+  payload.append("document_session_id", documentSessionId);
   if (agreementInput.files[0]) {
     payload.append("agreement", agreementInput.files[0]);
-  }
-  for (const file of projectDocsInput.files) {
-    payload.append("project_docs", file);
-  }
-  for (const file of projectDocDirectoryInput.files) {
-    if (file.name.toLowerCase().endsWith(".md") || file.name.toLowerCase().endsWith(".markdown")) {
-      payload.append("project_docs", file);
-    }
   }
   return payload;
 }
@@ -413,6 +460,7 @@ startButton.addEventListener("click", async () => {
   setLoading(true);
 
   try {
+    await ensureDocumentSession();
     const response = await fetch("/api/negotiate", {
       method: "POST",
       body: buildPayload(),
@@ -456,6 +504,7 @@ helpAnswerButton.addEventListener("click", async () => {
   setLoading(true);
 
   try {
+    await ensureDocumentSession();
     const response = await fetch("/api/help-answer", {
       method: "POST",
       body: buildPayload(argumentInput.value.trim()),
@@ -506,6 +555,7 @@ form.addEventListener("submit", async (event) => {
   setLoading(true);
 
   try {
+    await ensureDocumentSession();
     const response = await fetch("/api/negotiate", {
       method: "POST",
       body: buildPayload(argument),
@@ -539,6 +589,8 @@ resetButton.addEventListener("click", () => {
   }
   history = [];
   hasStarted = false;
+  documentSessionId = "";
+  documentSessionSignature = "";
   resetSessionUsage();
   topicInput.value = "";
   argumentInput.value = "";
