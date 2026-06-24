@@ -14,6 +14,7 @@ const startButton = document.querySelector("#start");
 const resetButton = document.querySelector("#reset");
 const microphoneButton = document.querySelector("#microphone");
 const helpAnswerButton = document.querySelector("#help-answer");
+const framingReportButton = document.querySelector("#framing-report");
 const microphoneStatus = document.querySelector("#microphone-status");
 const autoReadInput = document.querySelector("#auto-read");
 const voiceSelect = document.querySelector("#voice");
@@ -23,6 +24,9 @@ const costCallsNode = document.querySelector("#cost-calls");
 const costInputNode = document.querySelector("#cost-input");
 const costOutputNode = document.querySelector("#cost-output");
 const costTotalNode = document.querySelector("#cost-total");
+const blockingLoader = document.querySelector("#blocking-loader");
+const blockingLoaderTitle = document.querySelector("#blocking-loader-title");
+const blockingLoaderText = document.querySelector("#blocking-loader-text");
 
 let history = [];
 let hasStarted = false;
@@ -58,10 +62,14 @@ function appendMessage(role, content) {
     role === "user"
       ? "Developpeur"
       : role === "error"
-        ? "Erreur"
-        : role === "helper"
-          ? "Aide"
-          : "Client";
+          ? "Erreur"
+          : role === "helper"
+            ? "Aide"
+            : role === "report"
+              ? "Rapport de cadrage"
+              : role === "improvement"
+                ? "Amelioration du rapport"
+                : "Client";
 
   const body = document.createElement("p");
   body.textContent = content;
@@ -71,9 +79,133 @@ function appendMessage(role, content) {
   messagesNode.scrollTop = messagesNode.scrollHeight;
 }
 
+function appendReport(report, markdown) {
+  const message = document.createElement("article");
+  message.className = "message report";
+
+  const title = document.createElement("strong");
+  const globalScore = Number(report.global_score || 0);
+  title.textContent = `Rapport de cadrage - maturite ${globalScore} %`;
+
+  const summary = document.createElement("p");
+  summary.textContent = report.executive_summary || "Synthese non disponible.";
+
+  const scoreGrid = document.createElement("div");
+  scoreGrid.className = "score-grid";
+  const scores = Array.isArray(report.scores) ? report.scores : [];
+  for (const item of scores) {
+    const scoreItem = document.createElement("div");
+    const scoreName = document.createElement("span");
+    const scoreValue = document.createElement("strong");
+    const scoreReason = document.createElement("small");
+    scoreName.textContent = item.name || "Critere";
+    scoreValue.textContent = `${Number(item.score || 0)} %`;
+    scoreReason.textContent = item.reason || "";
+    scoreItem.append(scoreName, scoreValue, scoreReason);
+    scoreGrid.append(scoreItem);
+  }
+
+  const criticalTitle = document.createElement("h2");
+  criticalTitle.textContent = "Points critiques";
+  const criticalList = document.createElement("ul");
+  const criticalPoints = Array.isArray(report.critical_points) ? report.critical_points : [];
+  for (const point of criticalPoints.slice(0, 5)) {
+    const item = document.createElement("li");
+    item.textContent = point;
+    criticalList.append(item);
+  }
+  if (criticalList.children.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "Aucun point critique identifie.";
+    criticalList.append(item);
+  }
+
+  const downloadButton = document.createElement("button");
+  downloadButton.className = "secondary-action report-download";
+  downloadButton.type = "button";
+  downloadButton.textContent = "Telecharger le rapport";
+  downloadButton.addEventListener("click", () => downloadReport(markdown || "", report));
+
+  const improveButton = document.createElement("button");
+  improveButton.className = "secondary-action report-improve";
+  improveButton.type = "button";
+  improveButton.textContent = "Ameliorer le rapport";
+  improveButton.addEventListener("click", () => improveReport(report, improveButton));
+
+  const actions = document.createElement("div");
+  actions.className = "report-actions";
+  actions.append(downloadButton, improveButton);
+
+  message.append(title, summary, scoreGrid, criticalTitle, criticalList, actions);
+  messagesNode.append(message);
+  messagesNode.scrollTop = messagesNode.scrollHeight;
+}
+
+function appendImprovement(improvement) {
+  const message = document.createElement("article");
+  message.className = "message improvement";
+
+  const title = document.createElement("strong");
+  title.textContent = `Plan d'amelioration - cible ${Number(improvement.target_score || 0)} %`;
+
+  const summary = document.createElement("p");
+  summary.textContent = improvement.summary || "Analyse non disponible.";
+
+  const actionList = document.createElement("ul");
+  const priorityActions = Array.isArray(improvement.priority_actions)
+    ? improvement.priority_actions
+    : [];
+  for (const action of priorityActions) {
+    const item = document.createElement("li");
+    const axis = action.axis || "Axe";
+    const currentScore = Number(action.current_score || 0);
+    const targetScore = Number(action.target_score || 0);
+    const expectedImpact = action.expected_impact || "";
+    item.textContent = `${axis} (${currentScore} % -> ${targetScore} %) : ${action.action || ""} ${expectedImpact}`;
+    actionList.append(item);
+  }
+  if (actionList.children.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "Aucune action prioritaire identifiee.";
+    actionList.append(item);
+  }
+
+  const questionTitle = document.createElement("h2");
+  questionTitle.textContent = "Questions a trancher";
+  const questionList = document.createElement("ul");
+  const questions = Array.isArray(improvement.questions_to_answer)
+    ? improvement.questions_to_answer
+    : [];
+  for (const question of questions) {
+    const item = document.createElement("li");
+    item.textContent = question;
+    questionList.append(item);
+  }
+  if (questionList.children.length === 0) {
+    const item = document.createElement("li");
+    item.textContent = "Aucune question complementaire identifiee.";
+    questionList.append(item);
+  }
+
+  message.append(title, summary, actionList, questionTitle, questionList);
+  messagesNode.append(message);
+  messagesNode.scrollTop = messagesNode.scrollHeight;
+}
+
+function showBlockingLoader(title, text) {
+  blockingLoaderTitle.textContent = title;
+  blockingLoaderText.textContent = text;
+  blockingLoader.hidden = false;
+}
+
+function hideBlockingLoader() {
+  blockingLoader.hidden = true;
+}
+
 function setLoading(isLoading) {
   sendButton.disabled = isLoading || !hasStarted;
   helpAnswerButton.disabled = isLoading || !hasStarted;
+  framingReportButton.disabled = isLoading || !hasStarted;
   startButton.disabled = isLoading || hasStarted;
   sendButton.textContent = isLoading ? "Question en cours..." : "Envoyer la reponse";
   startButton.textContent = isLoading ? "Client en cours..." : "Demarrer la discussion";
@@ -83,6 +215,7 @@ function setComposerEnabled(isEnabled) {
   argumentInput.disabled = !isEnabled;
   microphoneButton.disabled = !isEnabled || !recognition;
   helpAnswerButton.disabled = !isEnabled;
+  framingReportButton.disabled = !isEnabled;
   sendButton.disabled = !isEnabled;
 }
 
@@ -222,6 +355,117 @@ function addSessionUsage(usage) {
   sessionUsage.costUsd += usage.cost_usd || 0;
   sessionUsage.hasUnpricedProvider ||= usage.provider !== "openai";
   renderSessionUsage();
+}
+
+async function readJsonResponse(response) {
+  const body = await response.text();
+  try {
+    return body ? JSON.parse(body) : {};
+  } catch {
+    return {
+      detail: body || "Reponse serveur invalide.",
+    };
+  }
+}
+
+function escapeHtml(value) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function markdownToPrintableHtml(markdown) {
+  const lines = markdown.split("\n");
+  return lines
+    .map((line) => {
+      if (line.startsWith("# ")) {
+        return `<h1>${escapeHtml(line.slice(2))}</h1>`;
+      }
+      if (line.startsWith("## ")) {
+        return `<h2>${escapeHtml(line.slice(3))}</h2>`;
+      }
+      if (line.startsWith("- ")) {
+        return `<li>${escapeHtml(line.slice(2))}</li>`;
+      }
+      if (!line.trim()) {
+        return "";
+      }
+      return `<p>${escapeHtml(line)}</p>`;
+    })
+    .join("\n")
+    .replaceAll("</li>\n<li>", "</li><li>");
+}
+
+function downloadReport(markdown, report) {
+  const html = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Rapport de cadrage CODEV</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; line-height: 1.5; color: #17211b; }
+    h1, h2 { color: #0d766e; }
+    li { margin: 6px 0; }
+    @media print { body { margin: 20mm; } }
+  </style>
+</head>
+<body>
+${markdownToPrintableHtml(markdown)}
+<script>window.reportData = ${JSON.stringify(report).replaceAll("<", "\\u003c")};</script>
+</body>
+</html>`;
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "rapport-cadrage-codev.html";
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+async function improveReport(report, button) {
+  if (!hasApiToken()) {
+    appendMessage("error", "Le token API est obligatoire.");
+    apiTokenInput.focus();
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Analyse en cours...";
+  showBlockingLoader(
+    "Amelioration du rapport...",
+    "Analyse des axes faibles et preparation des actions d'amelioration.",
+  );
+  setLoading(true);
+
+  const payload = new FormData();
+  payload.append("llm_provider", llmProviderInput.value);
+  payload.append("api_token", apiTokenInput.value.trim());
+  payload.append("report", JSON.stringify(report));
+
+  try {
+    const response = await fetch("/api/improve-report", {
+      method: "POST",
+      body: payload,
+    });
+    const data = await readJsonResponse(response);
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Erreur inconnue.");
+    }
+
+    appendImprovement(data.improvement || {});
+    addSessionUsage(data.usage);
+    button.textContent = "Analyse generee";
+  } catch (error) {
+    appendMessage("error", error.message);
+    button.disabled = false;
+    button.textContent = "Ameliorer le rapport";
+  } finally {
+    hideBlockingLoader();
+    setLoading(false);
+  }
 }
 
 function resetSessionUsage() {
@@ -520,6 +764,47 @@ helpAnswerButton.addEventListener("click", async () => {
   } catch (error) {
     appendMessage("error", error.message);
   } finally {
+    setLoading(false);
+    argumentInput.focus();
+  }
+});
+
+framingReportButton.addEventListener("click", async () => {
+  if (!hasStarted) {
+    appendMessage("error", "Demarrez la discussion avant de generer le rapport.");
+    return;
+  }
+
+  if (!hasApiToken()) {
+    appendMessage("error", "Le token API est obligatoire.");
+    apiTokenInput.focus();
+    return;
+  }
+
+  showBlockingLoader(
+    "Generation du rapport...",
+    "Analyse de la discussion, calcul du score et preparation des points critiques.",
+  );
+  setLoading(true);
+
+  try {
+    await ensureDocumentSession();
+    const response = await fetch("/api/framing-report", {
+      method: "POST",
+      body: buildPayload(),
+    });
+    const data = await readJsonResponse(response);
+
+    if (!response.ok) {
+      throw new Error(data.detail || "Erreur inconnue.");
+    }
+
+    appendReport(data.report || {}, data.markdown || "");
+    addSessionUsage(data.usage);
+  } catch (error) {
+    appendMessage("error", error.message);
+  } finally {
+    hideBlockingLoader();
     setLoading(false);
     argumentInput.focus();
   }

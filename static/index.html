@@ -107,6 +107,14 @@
         </aside>
 
         <section class="conversation-panel">
+          <div id="blocking-loader" class="blocking-loader" role="status" aria-live="assertive" hidden>
+            <div class="loader-card">
+              <span class="loader-spinner" aria-hidden="true"></span>
+              <strong id="blocking-loader-title">Generation en cours...</strong>
+              <p id="blocking-loader-text">Analyse de la discussion et preparation du rapport.</p>
+            </div>
+          </div>
+
           <div id="messages" class="messages" aria-live="polite">
             <article class="message assistant">
               <strong>Client</strong>
@@ -125,6 +133,9 @@
               </button>
               <button id="help-answer" class="secondary-action" type="button">
                 Aide-moi a repondre
+              </button>
+              <button id="framing-report" class="secondary-action" type="button">
+                Generer le rapport
               </button>
               <p id="microphone-status" class="microphone-status" role="status"></p>
               <button id="send" type="submit">Envoyer la reponse</button>

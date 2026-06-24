@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import json
 from collections import Counter
 from dataclasses import dataclass
 from typing import Annotated
@@ -8,7 +9,7 @@ from typing import Annotated
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from pypdf import PdfReader
 
 
@@ -70,6 +71,7 @@ DOCUMENT_SESSIONS: dict[str, "DocumentSession"] = {}
 
 app = FastAPI(title="Assistant de CODEV")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 
 
 @dataclass
@@ -493,46 +495,38 @@ def get_client_profile(profile: str) -> dict[str, str]:
     return CLIENT_PROFILES.get(profile, CLIENT_PROFILES["sales"])
 
 
+def load_prompt_template(filename: str) -> str:
+    path = os.path.join(PROMPTS_DIR, filename)
+    with open(path, encoding="utf-8") as prompt_file:
+        return prompt_file.read().strip()
+
+
+def build_change_context(change_document_text: str) -> str:
+    if change_document_text:
+        return f"\n\nDocument de l'evolution/correction extrait du PDF:\n{change_document_text}"
+    return "\n\nAucun PDF d'evolution/correction n'a ete fourni."
+
+
+def build_project_context(project_document_text: str) -> str:
+    if project_document_text:
+        return f"\n\nDocumentation projet disponible:\n{project_document_text}"
+    return "\n\nAucune documentation projet n'a ete fournie."
+
+
 def build_system_prompt(
     change_description: str,
     change_document_text: str,
     project_document_text: str,
     profile: str,
 ) -> str:
-    change_context = (
-        f"\n\nDocument de l'evolution/correction extrait du PDF:\n{change_document_text}"
-        if change_document_text
-        else "\n\nAucun PDF d'evolution/correction n'a ete fourni."
-    )
-    project_context = (
-        f"\n\nDocumentation projet disponible:\n{project_document_text}"
-        if project_document_text
-        else "\n\nAucune documentation projet n'a ete fournie."
-    )
     description = change_description or "Aucune description texte n'a ete fournie."
     client_profile = get_client_profile(profile)
-    return f"""
-Tu joues le role du client dans une discussion de CODEV avec un developpeur.
-Evolution ou correction presentee par le developpeur:
-{description}
-{change_context}
-{project_context}
-
-{client_profile["prompt"]}
-
-Objectif:
-- Te comporter comme un client metier credible, curieux et exigeant.
-- Poser des questions sur le contenu fonctionnel, les impacts, les cas limites, les risques et les criteres d'acceptation.
-- Utiliser la documentation uniquement si elle est fournie et pertinente.
-- Quand la documentation projet apporte un point utile, t'en servir pour rendre tes remarques plus precises selon ton profil.
-- Ne pas donner de solution technique a la place du developpeur.
-- Creuser une seule zone d'incertitude a la fois pour garder un echange naturel.
-- Rester en francais.
-
-Format de reponse:
-Reponds en 2 a 5 phrases maximum.
-Termine toujours par une question claire au developpeur.
-""".strip()
+    return load_prompt_template("client_questions.txt").format(
+        description=description,
+        change_context=build_change_context(change_document_text),
+        project_context=build_project_context(project_document_text),
+        client_profile_prompt=client_profile["prompt"],
+    )
 
 
 def build_answer_help_prompt(
@@ -540,44 +534,141 @@ def build_answer_help_prompt(
     change_document_text: str,
     project_document_text: str,
 ) -> str:
-    change_context = (
-        f"\n\nDocument de l'evolution/correction extrait du PDF:\n{change_document_text}"
-        if change_document_text
-        else "\n\nAucun PDF d'evolution/correction n'a ete fourni."
-    )
-    project_context = (
-        f"\n\nDocumentation projet disponible:\n{project_document_text}"
-        if project_document_text
-        else "\n\nAucune documentation projet n'a ete fournie."
-    )
     description = change_description or "Aucune description texte n'a ete fournie."
-    return f"""
-Tu aides un developpeur a preparer sa reponse pendant une discussion de CODEV.
-Evolution ou correction:
-{description}
-{change_context}
-{project_context}
+    return load_prompt_template("answer_help.txt").format(
+        description=description,
+        change_context=build_change_context(change_document_text),
+        project_context=build_project_context(project_document_text),
+    )
 
-Objectif:
-- Proposer une approche de reponse, sans rediger la reponse finale a sa place.
-- T'appuyer sur la documentation projet si elle est disponible et pertinente.
-- Identifier les points a clarifier, les arguments fonctionnels/techniques utiles et les risques a reconnaitre.
-- Rester concret, court et actionnable.
-- Rester en francais.
 
-Format:
-1. Angle de reponse conseille.
-2. Points a verifier dans la documentation ou dans le code.
-3. Formulations possibles, sous forme de fragments et non de reponse complete.
-""".strip()
+def build_framing_report_prompt(
+    change_description: str,
+    change_document_text: str,
+    project_document_text: str,
+) -> str:
+    description = change_description or "Aucune description texte n'a ete fournie."
+    return load_prompt_template("framing_report.txt").format(
+        description=description,
+        change_context=build_change_context(change_document_text),
+        project_context=build_project_context(project_document_text),
+    )
+
+
+def build_report_markdown(report: dict[str, object]) -> str:
+    scores = report.get("scores") if isinstance(report.get("scores"), list) else []
+    sections = [
+        "# Rapport de cadrage CODEV",
+        "",
+        f"Score de maturite global: {int(report.get('global_score') or 0)} %",
+        "",
+        "## Synthese",
+        str(report.get("executive_summary") or "Non renseigne."),
+        "",
+        "## Scores",
+    ]
+
+    for item in scores:
+        if not isinstance(item, dict):
+            continue
+        name = item.get("name") or "Critere"
+        score = int(item.get("score") or 0)
+        reason = item.get("reason") or "Non renseigne."
+        sections.append(f"- {name}: {score} % - {reason}")
+
+    for key, title in [
+        ("critical_points", "Points critiques a clarifier"),
+        ("clarified_points", "Points deja clarifies"),
+        ("residual_risks", "Risques residuels"),
+        ("acceptance_criteria", "Criteres d'acceptation proposes"),
+        ("next_actions", "Prochaines actions"),
+    ]:
+        values = report.get(key) if isinstance(report.get(key), list) else []
+        sections.extend(["", f"## {title}"])
+        if values:
+            sections.extend(f"- {value}" for value in values)
+        else:
+            sections.append("- Aucun element identifie.")
+
+    return "\n".join(sections)
+
+
+def build_report_improvement_prompt(report: dict[str, object]) -> str:
+    return load_prompt_template("report_improvement.txt").format(
+        report_json=json.dumps(report, ensure_ascii=False, indent=2)
+    )
+
+
+def parse_report_response(content: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if not match:
+            raise HTTPException(status_code=502, detail="Rapport IA invalide.")
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=502, detail="Rapport IA invalide.") from exc
+
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="Rapport IA invalide.")
+    return parsed
+
+
+def build_fallback_improvement(report: dict[str, object]) -> dict[str, object]:
+    scores = report.get("scores") if isinstance(report.get("scores"), list) else []
+    weak_scores = sorted(
+        [item for item in scores if isinstance(item, dict)],
+        key=lambda item: int(item.get("score") or 0),
+    )[:3]
+    current_global_score = int(report.get("global_score") or 0)
+    target_score = min(max(current_global_score + 20, 70), 90)
+
+    priority_actions = []
+    questions_to_answer = []
+    for item in weak_scores:
+        axis = str(item.get("name") or "Axe a clarifier")
+        current_score = int(item.get("score") or 0)
+        priority_actions.append(
+            {
+                "axis": axis,
+                "current_score": current_score,
+                "target_score": min(max(current_score + 25, 70), 90),
+                "action": f"Clarifier les attendus sur l'axe {axis.lower()} et les transformer en criteres d'acceptation verifiables.",
+                "expected_impact": "Reduction des zones floues avant developpement.",
+            }
+        )
+        questions_to_answer.append(
+            f"Quelles decisions explicites manquent encore pour securiser l'axe {axis.lower()} ?"
+        )
+
+    critical_points = report.get("critical_points")
+    if isinstance(critical_points, list):
+        questions_to_answer.extend(str(point) for point in critical_points[:5])
+
+    return {
+        "target_score": target_score,
+        "summary": "Le score peut progresser en transformant les points faibles du rapport en decisions explicites, criteres d'acceptation et contraintes mesurables.",
+        "priority_actions": priority_actions,
+        "questions_to_answer": questions_to_answer[:8],
+        "quick_wins": [
+            "Nommer les droits d'acces attendus.",
+            "Definir les donnees incluses et exclues.",
+            "Fixer les volumes ou limites de performance.",
+            "Ajouter des criteres d'acceptation testables.",
+        ],
+        "definition_of_ready": [
+            "Les utilisateurs concernes sont identifies.",
+            "Les donnees manipulees sont listees.",
+            "Les cas limites principaux sont couverts.",
+            "Les criteres d'acceptation sont mesurables.",
+        ],
+    }
 
 
 def build_opening_prompt() -> str:
-    return """
-Commence la discussion en tant que client.
-Base-toi sur l'evolution ou la correction fournie et pose la premiere question utile au developpeur.
-Ne demande pas de salutation ni de confirmation generale.
-""".strip()
+    return load_prompt_template("opening_question.txt")
 
 
 @app.get("/")
@@ -774,5 +865,157 @@ async def help_answer(
     content = response.choices[0].message.content or ""
     return {
         "reply": content.strip(),
+        "usage": build_usage_report(response.usage, provider, model),
+    }
+
+
+@app.post("/api/framing-report")
+async def framing_report(
+    topic: Annotated[str, Form()],
+    profile: Annotated[str, Form()] = "sales",
+    llm_provider: Annotated[str, Form()] = "openai",
+    api_token: Annotated[str, Form()] = "",
+    history: Annotated[str, Form()] = "[]",
+    document_session_id: Annotated[str, Form()] = "",
+    agreement: Annotated[UploadFile | None, File()] = None,
+    project_docs: Annotated[list[UploadFile] | None, File()] = None,
+) -> dict[str, object]:
+    change_document_text = extract_pdf_text(agreement)
+    if not topic.strip() and not change_document_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="La description ou le PDF de l'evolution/correction est obligatoire.",
+        )
+
+    try:
+        raw_history = json.loads(history)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Historique invalide.") from exc
+
+    client_profile = get_client_profile(profile)
+    retrieval_query = "\n".join(
+        [
+            topic.strip(),
+            client_profile["label"],
+            *[
+                item.get("content", "")
+                for item in raw_history[-8:]
+                if isinstance(item, dict) and isinstance(item.get("content"), str)
+            ],
+        ]
+    )
+    project_document_text = retrieve_project_context(
+        document_session_id,
+        retrieval_query,
+        llm_provider,
+        api_token,
+    )
+    if not project_document_text and project_docs:
+        project_document_text = await extract_project_document_text(project_docs)
+
+    messages = [
+        {
+            "role": "system",
+            "content": build_framing_report_prompt(
+                topic.strip(),
+                change_document_text,
+                project_document_text,
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Profil client utilise pendant la discussion: {client_profile['label']}.",
+        },
+    ]
+    for item in raw_history[-MAX_HISTORY_MESSAGES:]:
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str):
+            messages.append({"role": role, "content": content})
+
+    messages.append(
+        {
+            "role": "user",
+            "content": """
+Genere le rapport de cadrage et le score de maturite au format JSON demande.
+Important:
+- Analyse la discussion complete dans l'ordre chronologique.
+- Les reponses du developpeur et les validations du client doivent etre prises en compte comme des clarifications.
+- Si un point etait manquant dans la demande initiale mais a ete precise dans la discussion, ne le compte plus comme manquant.
+- Liste ce point dans `clarified_points` et ajuste le score de l'axe concerne a la hausse.
+""".strip(),
+        }
+    )
+
+    client, model, provider = get_llm_config(llm_provider, api_token)
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.2,
+    )
+
+    content = response.choices[0].message.content or ""
+    report = parse_report_response(content.strip())
+    return {
+        "report": report,
+        "markdown": build_report_markdown(report),
+        "usage": build_usage_report(response.usage, provider, model),
+    }
+
+
+@app.post("/api/improve-report")
+async def improve_report(
+    report: Annotated[str, Form()],
+    llm_provider: Annotated[str, Form()] = "openai",
+    api_token: Annotated[str, Form()] = "",
+) -> dict[str, object]:
+    try:
+        parsed_report = json.loads(report)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Rapport invalide.") from exc
+
+    if not isinstance(parsed_report, dict):
+        raise HTTPException(status_code=400, detail="Rapport invalide.")
+
+    try:
+        messages = [
+            {
+                "role": "system",
+                "content": build_report_improvement_prompt(parsed_report),
+            },
+            {
+                "role": "user",
+                "content": "Explique les actions a mener pour ameliorer le score de maturite du rapport.",
+            },
+        ]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Prompt d'amelioration du rapport invalide.",
+        ) from exc
+
+    client, model, provider = get_llm_config(llm_provider, api_token)
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=0.2,
+        )
+    except OpenAIError as exc:
+        raise HTTPException(status_code=502, detail=f"Erreur du fournisseur LLM: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Erreur inattendue pendant l'analyse du rapport.",
+        ) from exc
+
+    content = response.choices[0].message.content or ""
+    try:
+        improvement = parse_report_response(content.strip())
+    except HTTPException:
+        improvement = build_fallback_improvement(parsed_report)
+
+    return {
+        "improvement": improvement,
         "usage": build_usage_report(response.usage, provider, model),
     }

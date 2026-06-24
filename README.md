@@ -1,14 +1,36 @@
-# Assistant de CODEV
+# CODEV - Assistant de cadrage fonctionnel pilote par IA
 
-Application web locale ou le modele OpenAI joue le role du client dans une discussion de CODEV.
-Le developpeur renseigne une evolution ou une correction en texte, ajoute optionnellement un PDF, puis laisse le client demarrer la discussion avec une premiere question sur le contenu.
-Une documentation projet facultative peut aussi etre fournie pour enrichir les questions du client.
+Application web locale qui aide a challenger une evolution ou une correction avant developpement.
+CODEV simule un atelier de cadrage avec plusieurs profils client, detecte les zones floues du besoin, puis produit un score de maturite et un rapport de cadrage exploitable par une equipe projet.
+
+L'objectif n'est pas de remplacer le chef de projet ou le developpeur, mais de faire ressortir plus tot les ambiguites qui generent souvent des bugs, des retours client ou des changements de perimetre.
 
 Le profil de l'interlocuteur client est selectionnable avant le demarrage:
 
 - Commercial
 - Technique
 - Responsable
+
+Exemple:
+
+> Ajouter un bouton d'export Excel dans l'ecran des commandes.
+
+CODEV peut alors faire emerger des questions comme:
+
+- Qui est autorise a exporter les donnees ?
+- Les remises negociees doivent-elles apparaitre dans l'export ?
+- Quel volume de commandes doit etre supporte ?
+- Quels criteres d'acceptation valident que l'export est conforme ?
+
+## Fonctionnalites principales
+
+- Simulation d'un atelier de cadrage avec un profil commercial, technique ou responsable.
+- Questions successives pour challenger les impacts fonctionnels, les risques, les cas limites et les criteres d'acceptation.
+- Aide au developpeur pour preparer une reponse sans repondre a sa place.
+- Indexation optionnelle de documentation projet PDF ou Markdown pour contextualiser les questions.
+- Score de maturite du besoin sur plusieurs axes: completude, securite, performance, UX, donnees et exploitabilite.
+- Rapport de cadrage telechargeable en HTML, imprimable en PDF depuis le navigateur.
+- Analyse du rapport pour expliquer les actions qui feraient progresser le score de maturite.
 
 Le fournisseur LLM est aussi selectionnable dans l'interface:
 
@@ -18,6 +40,18 @@ Le fournisseur LLM est aussi selectionnable dans l'interface:
 La documentation projet peut etre fournie sous forme de PDF, de fichiers Markdown, ou d'un dossier wiki Markdown.
 Elle est indexee une fois dans une session documentaire locale, puis seuls les extraits utiles sont injectes dans les prompts.
 Le bouton `Aide-moi a repondre` utilise la discussion et cette session documentaire pour proposer une approche de reponse au developpeur, sans repondre a sa place.
+Le bouton `Generer le rapport` synthetise la discussion, calcule un score de maturite, liste les points critiques restants et propose des criteres d'acceptation.
+Une fois le rapport genere, le bouton `Ameliorer le rapport` analyse les axes faibles et propose les questions, decisions et actions qui permettraient d'augmenter le score.
+
+## Prompts utilises
+
+Les prompts sont disponibles dans le dossier `prompts/` pour faciliter la revue ou la presentation devant un jury:
+
+- `prompts/client_questions.txt`: questions posees par le profil client selectionne.
+- `prompts/opening_question.txt`: consigne utilisee pour demarrer la discussion.
+- `prompts/answer_help.txt`: aide au developpeur pour preparer sa reponse.
+- `prompts/framing_report.txt`: generation du rapport et du score de maturite.
+- `prompts/report_improvement.txt`: analyse du rapport et actions pour ameliorer le score.
 
 La session documentaire utilise une recherche hybride:
 
