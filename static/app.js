@@ -18,6 +18,7 @@ const framingReportButton = document.querySelector("#framing-report");
 const microphoneStatus = document.querySelector("#microphone-status");
 const autoReadInput = document.querySelector("#auto-read");
 const ttsProviderInput = document.querySelector("#tts-provider");
+const voicePanel = document.querySelector(".voice-panel");
 const elevenLabsKeyField = document.querySelector("#elevenlabs-key-field");
 const elevenLabsApiKeyInput = document.querySelector("#elevenlabs-api-key");
 const voiceSelect = document.querySelector("#voice");
@@ -308,6 +309,7 @@ function renderProviderHelp() {
 
 function renderTtsProvider() {
   const usesElevenLabs = ttsProviderInput.value === "elevenlabs";
+  voicePanel.classList.toggle("is-elevenlabs", usesElevenLabs);
   elevenLabsKeyField.hidden = !usesElevenLabs;
   populateVoices();
 }

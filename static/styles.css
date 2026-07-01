@@ -76,11 +76,10 @@ select {
 .setup-panel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-height: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  padding: 12px 14px;
+  overflow: hidden;
+  padding: 10px 12px;
   background:
     linear-gradient(180deg, rgba(0, 102, 161, 0.13), transparent 26%),
     radial-gradient(circle at 100% 0%, rgba(255, 99, 25, 0.12), transparent 34%),
@@ -91,21 +90,21 @@ select {
 
 .brand-panel {
   display: grid;
-  gap: 5px;
-  padding: 3px 4px 4px;
+  gap: 3px;
+  padding: 2px 4px 3px;
 }
 
 .brand-panel p:last-child {
   margin: 0;
   color: var(--muted-inverse);
-  font-size: 0.8rem;
-  line-height: 1.3;
+  font-size: 0.74rem;
+  line-height: 1.2;
 }
 
 .eyebrow {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   color: var(--eviden-orange);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -113,38 +112,46 @@ select {
 
 h1 {
   margin: 0;
-  font-size: clamp(1.45rem, 1.6vw, 1.8rem);
+  font-size: clamp(1.3rem, 1.45vw, 1.55rem);
   line-height: 1.1;
-  letter-spacing: -0.05em;
+  letter-spacing: 0;
 }
 
 h2 {
   margin: 0;
   line-height: 1.1;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
 }
 
 .config-card {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 6px;
+  padding: 8px;
   border: 1px solid var(--border-dark);
-  border-radius: 15px;
+  border-radius: 12px;
   background: rgba(25, 42, 34, 0.76);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.setup-panel > .config-card:not(.voice-panel) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.setup-panel > .config-card:not(.voice-panel) .card-heading {
+  grid-column: 1 / -1;
 }
 
 .card-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
 .card-heading span {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 19px;
+  height: 19px;
   border: 1px solid rgba(255, 99, 25, 0.46);
   border-radius: 999px;
   color: #ffd5c1;
@@ -154,16 +161,34 @@ h2 {
 
 .card-heading h2 {
   color: var(--text-inverse);
-  font-size: 0.86rem;
+  font-size: 0.8rem;
+}
+
+.tts-provider-inline {
+  min-width: 0;
+  margin-left: auto;
+}
+
+.tts-provider-inline span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.tts-provider-inline select {
+  min-height: 24px;
+  padding: 0 7px;
 }
 
 .field {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .field span {
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   font-weight: 850;
 }
 
@@ -193,26 +218,26 @@ select:focus {
 
 textarea {
   resize: vertical;
-  min-height: 58px;
-  padding: 8px 9px;
-  line-height: 1.35;
+  min-height: 46px;
+  padding: 6px 8px;
+  line-height: 1.25;
 }
 
 .setup-panel textarea {
-  max-height: 72px;
+  max-height: 54px;
 }
 
 input[type="file"] {
-  padding: 6px;
+  padding: 4px 6px;
 }
 
 input[type="password"] {
-  min-height: 32px;
+  min-height: 28px;
   padding: 0 9px;
 }
 
 select {
-  min-height: 32px;
+  min-height: 28px;
   padding: 0 9px;
 }
 
@@ -222,13 +247,18 @@ select {
 .setup-panel select {
   border-color: var(--border-dark);
   background: #f7fbf8;
+  font-size: 0.78rem;
 }
 
 .field-hint {
   color: var(--muted-inverse);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 1.15;
+}
+
+.setup-panel .field-hint {
+  display: none;
 }
 
 .field-hint a {
@@ -239,7 +269,7 @@ select {
 }
 
 button {
-  min-height: 34px;
+  min-height: 30px;
   border: 0;
   border-radius: var(--radius-sm);
   padding: 0 12px;
@@ -262,7 +292,7 @@ button:disabled {
 }
 
 #reset {
-  margin-top: auto;
+  margin-top: 0;
   border: 1px solid var(--border-dark);
   background: transparent;
   color: var(--text-inverse);
@@ -270,15 +300,31 @@ button:disabled {
 
 .voice-panel {
   display: grid;
-  gap: 7px;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
   padding-top: 0;
+}
+
+.voice-panel .card-heading,
+.voice-panel .toggle-field,
+#elevenlabs-key-field {
+  grid-column: 1 / -1;
+}
+
+.voice-panel .voice-field {
+  grid-column: 1 / -1;
+}
+
+.voice-panel.is-elevenlabs #elevenlabs-key-field,
+.voice-panel.is-elevenlabs .voice-field {
+  grid-column: auto;
 }
 
 .toggle-field {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 0.82rem;
+  gap: 7px;
+  font-size: 0.76rem;
   font-weight: 700;
 }
 
@@ -591,6 +637,15 @@ button:disabled {
   .setup-panel {
     padding: 22px;
     overflow: visible;
+  }
+
+  .setup-panel > .config-card:not(.voice-panel),
+  .voice-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .setup-panel .field-hint {
+    display: block;
   }
 
   .conversation-header {
