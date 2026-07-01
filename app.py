@@ -2,24 +2,28 @@ import os
 import re
 import uuid
 import json
+import urllib.error
+import urllib.request
 from collections import Counter
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Annotated
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from openai import OpenAI, OpenAIError
 from pypdf import PdfReader
 
 
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-GITHUB_MODELS_MODEL = os.getenv("GITHUB_MODELS_MODEL", "openai/gpt-4.1")
+GITHUB_MODELS_LIGHT_MODEL = os.getenv("GITHUB_MODELS_LIGHT_MODEL", "openai/gpt-4.1-nano")
+GITHUB_MODELS_MEDIUM_MODEL = os.getenv("GITHUB_MODELS_MEDIUM_MODEL", "openai/gpt-4.1-mini")
+GITHUB_MODELS_STRONG_MODEL = os.getenv("GITHUB_MODELS_STRONG_MODEL", "openai/gpt-4.1")
 GITHUB_MODELS_BASE_URL = os.getenv(
     "GITHUB_MODELS_BASE_URL",
     "https://models.github.ai/inference",
 )
-OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+ELEVENLABS_BASE_URL = os.getenv("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io")
+ELEVENLABS_TTS_MODEL = os.getenv("ELEVENLABS_TTS_MODEL", "eleven_multilingual_v2")
 GITHUB_MODELS_EMBEDDING_MODEL = os.getenv(
     "GITHUB_MODELS_EMBEDDING_MODEL",
     "openai/text-embedding-3-small",
@@ -31,9 +35,11 @@ DOCUMENT_CHUNK_CHARS = 1_200
 DOCUMENT_CHUNK_OVERLAP = 180
 MAX_RETRIEVED_DOCUMENT_CHUNKS = 6
 MAX_HISTORY_MESSAGES = 12
-DEFAULT_INPUT_PRICE_PER_1M = 0.15
-DEFAULT_CACHED_INPUT_PRICE_PER_1M = 0.075
-DEFAULT_OUTPUT_PRICE_PER_1M = 0.60
+MODEL_LEVELS = {
+    "light": GITHUB_MODELS_LIGHT_MODEL,
+    "medium": GITHUB_MODELS_MEDIUM_MODEL,
+    "strong": GITHUB_MODELS_STRONG_MODEL,
+}
 CLIENT_PROFILES = {
     "sales": {
         "label": "Commercial",
@@ -91,50 +97,167 @@ class DocumentSession:
     vector_index: object | None = None
 
 
-def get_openai_client(api_token: str) -> OpenAI:
-    token = api_token.strip() or os.getenv("OPENAI_API_KEY", "")
-    if not token:
-        raise HTTPException(
-            status_code=400,
-            detail="Le token API OpenAI est obligatoire.",
+class GitHubModelsError(Exception):
+    pass
+
+
+class GitHubModelsChatCompletions:
+    def __init__(self, client: "GitHubModelsClient") -> None:
+        self.client = client
+
+    def create(
+        self,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+    ) -> SimpleNamespace:
+        data = self.client.post_json(
+            "/chat/completions",
+            {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+            },
         )
-    return OpenAI(api_key=token)
+        choices = [
+            SimpleNamespace(
+                message=SimpleNamespace(content=choice.get("message", {}).get("content", ""))
+            )
+            for choice in data.get("choices", [])
+        ]
+        return SimpleNamespace(choices=choices, usage=data.get("usage"))
 
 
-def get_github_models_client(api_token: str) -> OpenAI:
+class GitHubModelsChat:
+    def __init__(self, client: "GitHubModelsClient") -> None:
+        self.completions = GitHubModelsChatCompletions(client)
+
+
+class GitHubModelsEmbeddings:
+    def __init__(self, client: "GitHubModelsClient") -> None:
+        self.client = client
+
+    def create(self, model: str, input: list[str]) -> SimpleNamespace:
+        data = self.client.post_json(
+            "/embeddings",
+            {
+                "model": model,
+                "input": input,
+            },
+        )
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(embedding=item.get("embedding", []))
+                for item in data.get("data", [])
+            ]
+        )
+
+
+class GitHubModelsClient:
+    def __init__(self, api_key: str, base_url: str) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.chat = GitHubModelsChat(self)
+        self.embeddings = GitHubModelsEmbeddings(self)
+
+    def post_json(self, path: str, payload: dict[str, object]) -> dict[str, object]:
+        request = urllib.request.Request(
+            f"{self.base_url}{path}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Accept": "application/vnd.github+json",
+                "Content-Type": "application/json",
+                "X-GitHub-Api-Version": "2026-03-10",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise GitHubModelsError(f"HTTP {exc.code}: {body}") from exc
+        except urllib.error.URLError as exc:
+            raise GitHubModelsError(str(exc)) from exc
+        except json.JSONDecodeError as exc:
+            raise GitHubModelsError("Reponse GitHub Models invalide.") from exc
+
+
+class ElevenLabsError(Exception):
+    pass
+
+
+def call_elevenlabs_json(path: str, api_key: str) -> dict[str, object]:
+    token = api_key.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="La cle API ElevenLabs est obligatoire.")
+
+    request = urllib.request.Request(
+        f"{ELEVENLABS_BASE_URL}{path}",
+        headers={
+            "xi-api-key": token,
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise ElevenLabsError(f"HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise ElevenLabsError(str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise ElevenLabsError("Reponse ElevenLabs invalide.") from exc
+
+
+def call_elevenlabs_audio(path: str, api_key: str, payload: dict[str, object]) -> bytes:
+    token = api_key.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="La cle API ElevenLabs est obligatoire.")
+
+    request = urllib.request.Request(
+        f"{ELEVENLABS_BASE_URL}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "xi-api-key": token,
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return response.read()
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise ElevenLabsError(f"HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise ElevenLabsError(str(exc)) from exc
+
+
+def get_github_models_client(api_token: str) -> GitHubModelsClient:
     token = api_token.strip() or os.getenv("GITHUB_MODELS_TOKEN", "")
     if not token:
         raise HTTPException(
             status_code=400,
             detail="Le token GitHub Models est obligatoire.",
         )
-    return OpenAI(
-        api_key=token,
-        base_url=GITHUB_MODELS_BASE_URL,
-        default_headers={
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2026-03-10",
-        },
-    )
+    return GitHubModelsClient(api_key=token, base_url=GITHUB_MODELS_BASE_URL)
 
 
-def get_llm_config(provider: str, api_token: str) -> tuple[OpenAI, str, str]:
-    if provider == "openai":
-        return get_openai_client(api_token), OPENAI_MODEL, "openai"
-    if provider == "github_copilot":
-        return get_github_models_client(api_token), GITHUB_MODELS_MODEL, "github_copilot"
-    raise HTTPException(status_code=400, detail="Fournisseur LLM invalide.")
+def get_llm_config(api_token: str, model_level: str) -> tuple[GitHubModelsClient, str, str]:
+    model = MODEL_LEVELS.get(model_level, GITHUB_MODELS_MEDIUM_MODEL)
+    return get_github_models_client(api_token), model, "github_copilot"
 
 
-def get_embedding_config(provider: str, api_token: str) -> tuple[OpenAI, str, str]:
-    if provider == "openai":
-        return get_openai_client(api_token), OPENAI_EMBEDDING_MODEL, "openai"
-    if provider == "github_copilot":
-        return get_github_models_client(api_token), GITHUB_MODELS_EMBEDDING_MODEL, "github_copilot"
-    raise HTTPException(status_code=400, detail="Fournisseur LLM invalide.")
+def get_embedding_config(api_token: str) -> tuple[GitHubModelsClient, str, str]:
+    return get_github_models_client(api_token), GITHUB_MODELS_EMBEDDING_MODEL, "github_copilot"
 
 
-def get_embedding_vectors(client: OpenAI, model: str, texts: list[str]) -> list[list[float]]:
+def get_embedding_vectors(client: GitHubModelsClient, model: str, texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
@@ -265,7 +388,6 @@ async def read_project_document(file: UploadFile, max_chars: int) -> tuple[str, 
 
 async def build_document_session(
     files: list[UploadFile] | None,
-    llm_provider: str,
     api_token: str,
 ) -> DocumentSession:
     if not files:
@@ -301,7 +423,7 @@ async def build_document_session(
             detail="Aucun contenu exploitable trouve dans la documentation projet.",
         )
 
-    client, embedding_model, _ = get_embedding_config(llm_provider, api_token)
+    client, embedding_model, _ = get_embedding_config(api_token)
     try:
         raw_vectors = get_embedding_vectors(
             client,
@@ -387,7 +509,6 @@ def score_vector_chunks(
 def retrieve_project_context(
     document_session_id: str,
     query: str,
-    llm_provider: str,
     api_token: str,
 ) -> str:
     if not document_session_id:
@@ -404,7 +525,7 @@ def retrieve_project_context(
     if not query_terms:
         selected_chunks = session.chunks[: min(MAX_RETRIEVED_DOCUMENT_CHUNKS, len(session.chunks))]
     else:
-        client, embedding_model, _ = get_embedding_config(llm_provider, api_token)
+        client, embedding_model, _ = get_embedding_config(api_token)
         try:
             query_vector = normalize_vector(get_embedding_vectors(client, embedding_model, [query])[0])
         except Exception as exc:
@@ -437,13 +558,6 @@ def retrieve_project_context(
     return "\n\n---\n\n".join(sections)
 
 
-def get_price_per_1m(name: str, default: float) -> float:
-    try:
-        return float(os.getenv(name, default))
-    except ValueError:
-        return default
-
-
 def get_nested_usage_value(source: object, name: str) -> int:
     if source is None:
         return 0
@@ -458,27 +572,12 @@ def build_usage_report(
     usage: object | None,
     provider: str,
     model: str,
-) -> dict[str, int | float | str]:
+) -> dict[str, int | None | str]:
     prompt_tokens = get_nested_usage_value(usage, "prompt_tokens")
     completion_tokens = get_nested_usage_value(usage, "completion_tokens")
     total_tokens = get_nested_usage_value(usage, "total_tokens")
     prompt_details = get_nested_usage_value(usage, "prompt_tokens_details")
     cached_prompt_tokens = get_nested_usage_value(prompt_details, "cached_tokens")
-    billable_prompt_tokens = max(prompt_tokens - cached_prompt_tokens, 0)
-
-    cost_usd = 0.0
-    if provider == "openai":
-        input_price = get_price_per_1m("OPENAI_INPUT_PRICE_PER_1M", DEFAULT_INPUT_PRICE_PER_1M)
-        cached_input_price = get_price_per_1m(
-            "OPENAI_CACHED_INPUT_PRICE_PER_1M",
-            DEFAULT_CACHED_INPUT_PRICE_PER_1M,
-        )
-        output_price = get_price_per_1m("OPENAI_OUTPUT_PRICE_PER_1M", DEFAULT_OUTPUT_PRICE_PER_1M)
-        cost_usd = (
-            (billable_prompt_tokens * input_price)
-            + (cached_prompt_tokens * cached_input_price)
-            + (completion_tokens * output_price)
-        ) / 1_000_000
 
     return {
         "provider": provider,
@@ -487,7 +586,7 @@ def build_usage_report(
         "cached_prompt_tokens": cached_prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
-        "cost_usd": cost_usd,
+        "cost_usd": None,
     }
 
 
@@ -678,11 +777,10 @@ def index() -> FileResponse:
 
 @app.post("/api/document-session")
 async def create_document_session(
-    llm_provider: Annotated[str, Form()] = "openai",
     api_token: Annotated[str, Form()] = "",
     project_docs: Annotated[list[UploadFile] | None, File()] = None,
 ) -> dict[str, object]:
-    session = await build_document_session(project_docs, llm_provider, api_token)
+    session = await build_document_session(project_docs, api_token)
     return {
         "document_session_id": session.session_id,
         "chunks": len(session.chunks),
@@ -691,12 +789,68 @@ async def create_document_session(
     }
 
 
+@app.post("/api/elevenlabs/voices")
+async def elevenlabs_voices(
+    elevenlabs_api_key: Annotated[str, Form()],
+) -> dict[str, object]:
+    try:
+        data = call_elevenlabs_json(
+            "/v2/voices?page_size=100&include_total_count=false",
+            elevenlabs_api_key,
+        )
+    except ElevenLabsError as exc:
+        raise HTTPException(status_code=502, detail=f"Erreur ElevenLabs: {exc}") from exc
+
+    voices = data.get("voices", [])
+    if not isinstance(voices, list):
+        raise HTTPException(status_code=502, detail="Reponse ElevenLabs invalide.")
+
+    return {
+        "voices": [
+            {
+                "voice_id": voice.get("voice_id"),
+                "name": voice.get("name") or "Voix sans nom",
+                "category": voice.get("category"),
+                "preview_url": voice.get("preview_url"),
+            }
+            for voice in voices
+            if isinstance(voice, dict) and voice.get("voice_id")
+        ]
+    }
+
+
+@app.post("/api/elevenlabs/speech")
+async def elevenlabs_speech(
+    text: Annotated[str, Form()],
+    voice_id: Annotated[str, Form()],
+    elevenlabs_api_key: Annotated[str, Form()],
+) -> Response:
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="Le texte a lire est obligatoire.")
+    if not voice_id.strip():
+        raise HTTPException(status_code=400, detail="La voix ElevenLabs est obligatoire.")
+
+    try:
+        audio = call_elevenlabs_audio(
+            f"/v1/text-to-speech/{voice_id.strip()}?output_format=mp3_44100_128",
+            elevenlabs_api_key,
+            {
+                "text": text.strip(),
+                "model_id": ELEVENLABS_TTS_MODEL,
+            },
+        )
+    except ElevenLabsError as exc:
+        raise HTTPException(status_code=502, detail=f"Erreur ElevenLabs: {exc}") from exc
+
+    return Response(content=audio, media_type="audio/mpeg")
+
+
 @app.post("/api/negotiate")
 async def negotiate(
     topic: Annotated[str, Form()],
     argument: Annotated[str, Form()] = "",
     profile: Annotated[str, Form()] = "sales",
-    llm_provider: Annotated[str, Form()] = "openai",
+    model_level: Annotated[str, Form()] = "medium",
     api_token: Annotated[str, Form()] = "",
     history: Annotated[str, Form()] = "[]",
     document_session_id: Annotated[str, Form()] = "",
@@ -731,7 +885,6 @@ async def negotiate(
     project_document_text = retrieve_project_context(
         document_session_id,
         retrieval_query,
-        llm_provider,
         api_token,
     )
     if not project_document_text and project_docs:
@@ -761,7 +914,7 @@ async def negotiate(
     else:
         messages.append({"role": "user", "content": build_opening_prompt()})
 
-    client, model, provider = get_llm_config(llm_provider, api_token)
+    client, model, provider = get_llm_config(api_token, model_level)
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -780,7 +933,7 @@ async def help_answer(
     topic: Annotated[str, Form()],
     argument: Annotated[str, Form()] = "",
     profile: Annotated[str, Form()] = "sales",
-    llm_provider: Annotated[str, Form()] = "openai",
+    model_level: Annotated[str, Form()] = "medium",
     api_token: Annotated[str, Form()] = "",
     history: Annotated[str, Form()] = "[]",
     document_session_id: Annotated[str, Form()] = "",
@@ -817,7 +970,6 @@ async def help_answer(
     project_document_text = retrieve_project_context(
         document_session_id,
         retrieval_query,
-        llm_provider,
         api_token,
     )
     if not project_document_text and project_docs:
@@ -855,7 +1007,7 @@ async def help_answer(
         }
     )
 
-    client, model, provider = get_llm_config(llm_provider, api_token)
+    client, model, provider = get_llm_config(api_token, model_level)
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -873,7 +1025,7 @@ async def help_answer(
 async def framing_report(
     topic: Annotated[str, Form()],
     profile: Annotated[str, Form()] = "sales",
-    llm_provider: Annotated[str, Form()] = "openai",
+    model_level: Annotated[str, Form()] = "medium",
     api_token: Annotated[str, Form()] = "",
     history: Annotated[str, Form()] = "[]",
     document_session_id: Annotated[str, Form()] = "",
@@ -907,7 +1059,6 @@ async def framing_report(
     project_document_text = retrieve_project_context(
         document_session_id,
         retrieval_query,
-        llm_provider,
         api_token,
     )
     if not project_document_text and project_docs:
@@ -947,7 +1098,7 @@ Important:
         }
     )
 
-    client, model, provider = get_llm_config(llm_provider, api_token)
+    client, model, provider = get_llm_config(api_token, model_level)
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -966,7 +1117,7 @@ Important:
 @app.post("/api/improve-report")
 async def improve_report(
     report: Annotated[str, Form()],
-    llm_provider: Annotated[str, Form()] = "openai",
+    model_level: Annotated[str, Form()] = "medium",
     api_token: Annotated[str, Form()] = "",
 ) -> dict[str, object]:
     try:
@@ -994,14 +1145,14 @@ async def improve_report(
             detail="Prompt d'amelioration du rapport invalide.",
         ) from exc
 
-    client, model, provider = get_llm_config(llm_provider, api_token)
+    client, model, provider = get_llm_config(api_token, model_level)
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
             temperature=0.2,
         )
-    except OpenAIError as exc:
+    except GitHubModelsError as exc:
         raise HTTPException(status_code=502, detail=f"Erreur du fournisseur LLM: {exc}") from exc
     except Exception as exc:
         raise HTTPException(

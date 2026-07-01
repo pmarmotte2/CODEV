@@ -30,16 +30,18 @@
           </label>
 
           <label class="field">
-            <span>Fournisseur LLM</span>
-            <select id="llm-provider">
-              <option value="openai">OpenAI</option>
-              <option value="github_copilot">Copilot GitHub</option>
+            <span>Puissance d'analyse</span>
+            <select id="model-level">
+              <option value="light">Leger</option>
+              <option value="medium" selected>Moyen</option>
+              <option value="strong">Fort</option>
             </select>
+            <span class="field-hint">Leger est plus rapide, Fort est plus approfondi.</span>
           </label>
 
           <label class="field">
-            <span>Token API</span>
-            <input id="api-token" type="password" autocomplete="off" placeholder="sk-... ou github_pat_..." />
+            <span>Token GitHub Models</span>
+            <input id="api-token" type="password" autocomplete="off" placeholder="github_pat_..." />
             <span id="token-hint" class="field-hint">
               Votre token est envoye au serveur local uniquement pour cet appel.
             </span>
@@ -71,37 +73,30 @@
             </label>
 
             <label class="field">
+              <span>Sortie vocale</span>
+              <select id="tts-provider">
+                <option value="local">Locale</option>
+                <option value="elevenlabs">ElevenLabs</option>
+              </select>
+            </label>
+
+            <label id="elevenlabs-key-field" class="field" hidden>
+              <span>Cle ElevenLabs</span>
+              <input id="elevenlabs-api-key" type="password" autocomplete="off" placeholder="sk_..." />
+              <span class="field-hint">
+                La liste des voix est chargee avec cette cle.
+                <a href="https://elevenlabs.io/app/developers/api-keys" target="_blank" rel="noreferrer">Creer la cle</a>
+              </span>
+            </label>
+
+            <label class="field">
               <span>Voix</span>
               <select id="voice"></select>
             </label>
 
+            <button id="preview-voice" class="secondary-action" type="button">Ecouter un extrait</button>
             <button id="stop-voice" class="secondary-action" type="button">Arreter la lecture</button>
           </div>
-
-          <section class="cost-panel" aria-label="Cout de la session">
-            <div class="cost-panel-header">
-              <span>Cout estime</span>
-              <strong id="cost-usd">$0.000000</strong>
-            </div>
-            <dl class="cost-grid">
-              <div>
-                <dt>Appels</dt>
-                <dd id="cost-calls">0</dd>
-              </div>
-              <div>
-                <dt>Input</dt>
-                <dd id="cost-input">0</dd>
-              </div>
-              <div>
-                <dt>Output</dt>
-                <dd id="cost-output">0</dd>
-              </div>
-              <div>
-                <dt>Total tokens</dt>
-                <dd id="cost-total">0</dd>
-              </div>
-            </dl>
-          </section>
 
           <button id="reset" type="button">Reinitialiser</button>
         </aside>
@@ -129,7 +124,7 @@
             </label>
             <div class="composer-actions">
               <button id="microphone" class="secondary-action" type="button" aria-pressed="false">
-                Demarrer le micro
+                Micro Ctrl
               </button>
               <button id="help-answer" class="secondary-action" type="button">
                 Aide-moi a repondre

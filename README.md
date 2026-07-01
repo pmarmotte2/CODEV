@@ -32,10 +32,8 @@ CODEV peut alors faire emerger des questions comme:
 - Rapport de cadrage telechargeable en HTML, imprimable en PDF depuis le navigateur.
 - Analyse du rapport pour expliquer les actions qui feraient progresser le score de maturite.
 
-Le fournisseur LLM est aussi selectionnable dans l'interface:
-
-- OpenAI, avec une cle API OpenAI
-- Copilot GitHub, via GitHub Models avec un fine-grained token GitHub ayant `Models` en lecture
+Le fournisseur LLM utilise est GitHub Copilot via GitHub Models.
+L'interface demande un fine-grained token GitHub ayant `Models` en lecture.
 
 La documentation projet peut etre fournie sous forme de PDF, de fichiers Markdown, ou d'un dossier wiki Markdown.
 Elle est indexee une fois dans une session documentaire locale, puis seuls les extraits utiles sont injectes dans les prompts.
@@ -45,7 +43,7 @@ Une fois le rapport genere, le bouton `Ameliorer le rapport` analyse les axes fa
 
 ## Prompts utilises
 
-Les prompts sont disponibles dans le dossier `prompts/` pour faciliter la revue ou la presentation devant un jury:
+Les prompts sont disponibles dans le dossier `prompts/` pour faciliter la revue ou leur modification:
 
 - `prompts/client_questions.txt`: questions posees par le profil client selectionne.
 - `prompts/opening_question.txt`: consigne utilisee pour demarrer la discussion.
@@ -55,10 +53,34 @@ Les prompts sont disponibles dans le dossier `prompts/` pour faciliter la revue 
 
 La session documentaire utilise une recherche hybride:
 
-- embeddings `text-embedding-3-small` avec OpenAI
-- embeddings `openai/text-embedding-3-small` avec Copilot GitHub via GitHub Models
+- embeddings `openai/text-embedding-3-small` via GitHub Models
 - score lexical local pour conserver les correspondances exactes sur les noms d'ecrans, champs, erreurs et acronymes
-- index vectoriel Python integre, accelere automatiquement par `turbovec` si l'installation optionnelle reussit
+- index vectoriel Python integre, accelere automatiquement par `turbovec`
+
+
+## Micro
+
+Le bouton micro utilise la reconnaissance vocale native du navigateur.
+Il fonctionne surtout sur Chrome ou Edge, avec autorisation d'acces au bon micro.
+L'audio n'est pas envoye au serveur: seul le texte reconnu est ajoute au champ reponse.
+La touche `Ctrl` peut etre maintenue pour dicter une reponse: le relachement de `Ctrl` arrete l'ecoute.
+La reponse n'est jamais envoyee automatiquement apres dictee. Elle doit etre envoyee avec le bouton `Envoyer la reponse` ou avec `Entree`.
+`Maj+Entree` permet de conserver un retour a la ligne dans le champ de reponse.
+
+## Lecture vocale
+
+La lecture des questions du client utilise la synthese vocale native du navigateur.
+Elle tourne localement avec les voix installees ou exposees par le navigateur.
+Le panneau de gauche permet d'activer/desactiver la lecture, de choisir une voix et d'arreter la lecture en cours.
+La sortie vocale peut aussi utiliser ElevenLabs:
+
+- selectionner `ElevenLabs` dans `Sortie vocale`;
+- saisir une cle API ElevenLabs;
+- la liste des voix disponibles est chargee depuis l'API ElevenLabs avec cette cle;
+- la lecture utilise ensuite la voix selectionnee.
+
+La sortie `Locale` conserve le fonctionnement TTS du navigateur sans appel externe.
+
 
 ## Installation
 
@@ -79,12 +101,21 @@ pip install -r requirements.txt
 ## Configuration
 
 ```powershell
-$env:OPENAI_MODEL="gpt-4o-mini"
-$env:GITHUB_MODELS_MODEL="openai/gpt-4.1"
+$env:GITHUB_MODELS_LIGHT_MODEL="openai/gpt-4.1-nano"
+$env:GITHUB_MODELS_MEDIUM_MODEL="openai/gpt-4.1-mini"
+$env:GITHUB_MODELS_STRONG_MODEL="openai/gpt-4.1"
+$env:GITHUB_MODELS_EMBEDDING_MODEL="openai/text-embedding-3-small"
+$env:ELEVENLABS_TTS_MODEL="eleven_multilingual_v2"
 ```
 
 Les tokens API sont saisis dans l'interface avant de demarrer la discussion.
-`OPENAI_MODEL` et `GITHUB_MODELS_MODEL` sont optionnels.
+La puissance d'analyse est selectionnable dans l'interface:
+
+- `Leger`: reponses plus rapides pour les echanges simples.
+- `Moyen`: niveau par defaut pour le cadrage courant.
+- `Fort`: analyse plus approfondie pour les rapports et sujets sensibles.
+
+Les variables de modele sont optionnelles.
 
 ## Lancement
 
@@ -101,32 +132,3 @@ uvicorn app:app --reload
 ```
 
 Ouvrir ensuite `http://127.0.0.1:8000`.
-
-## Micro
-
-Le bouton micro utilise la reconnaissance vocale native du navigateur.
-Il fonctionne surtout sur Chrome ou Edge, avec autorisation d'acces au bon micro.
-L'audio n'est pas envoye au serveur: seul le texte reconnu est ajoute au champ reponse.
-
-## Lecture vocale
-
-La lecture des questions du client utilise la synthese vocale native du navigateur.
-Elle tourne localement avec les voix installees ou exposees par le navigateur.
-Le panneau de gauche permet d'activer/desactiver la lecture, de choisir une voix et d'arreter la lecture en cours.
-
-## Compteur de cout
-
-Le compteur de session est incremente apres chaque appel a l'API OpenAI.
-Il utilise les tokens retournes par l'API et les tarifs par defaut de `gpt-4o-mini`:
-
-- input: `$0.15` par million de tokens
-- input cache: `$0.075` par million de tokens
-- output: `$0.60` par million de tokens
-
-Ces tarifs peuvent etre surcharges avec:
-
-```powershell
-$env:OPENAI_INPUT_PRICE_PER_1M="0.15"
-$env:OPENAI_CACHED_INPUT_PRICE_PER_1M="0.075"
-$env:OPENAI_OUTPUT_PRICE_PER_1M="0.60"
-```
