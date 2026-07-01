@@ -10,63 +10,90 @@
     <main class="app-shell">
       <section class="workspace" aria-label="Assistant de CODEV">
         <aside class="setup-panel">
-          <div>
+          <header class="brand-panel">
             <p class="eyebrow">Client vs developpeur</p>
             <h1>Assistant de CODEV</h1>
-          </div>
+            <p>Cadrez une demande avant developpement avec des objections client simulees.</p>
+          </header>
 
-          <label class="field">
-            <span>Evolution ou correction</span>
-            <textarea id="topic" rows="5" placeholder="Ex: ajout d'un parcours de validation, correction d'un calcul de remise..."></textarea>
-          </label>
+          <section class="config-card">
+            <div class="card-heading">
+              <span>01</span>
+              <h2>Besoin</h2>
+            </div>
 
-          <label class="field">
-            <span>Interlocuteur client</span>
-            <select id="profile">
-              <option value="sales">Commercial</option>
-              <option value="technical">Technique</option>
-              <option value="boss">Responsable</option>
-            </select>
-          </label>
+            <label class="field">
+              <span>Evolution ou correction</span>
+              <textarea id="topic" rows="5" placeholder="Ex: ajout d'un parcours de validation, correction d'un calcul de remise..."></textarea>
+            </label>
 
-          <label class="field">
-            <span>Puissance d'analyse</span>
-            <select id="model-level">
-              <option value="light">Leger</option>
-              <option value="medium" selected>Moyen</option>
-              <option value="strong">Fort</option>
-            </select>
-            <span class="field-hint">Leger est plus rapide, Fort est plus approfondi.</span>
-          </label>
+            <label class="field">
+              <span>Interlocuteur client</span>
+              <select id="profile">
+                <option value="sales">Commercial</option>
+                <option value="technical">Technique</option>
+                <option value="boss">Responsable</option>
+              </select>
+            </label>
+          </section>
 
-          <label class="field">
-            <span>Token GitHub Models</span>
-            <input id="api-token" type="password" autocomplete="off" placeholder="github_pat_..." />
-            <span id="token-hint" class="field-hint">
-              Votre token est envoye au serveur local uniquement pour cet appel.
-            </span>
-          </label>
+          <section class="config-card">
+            <div class="card-heading">
+              <span>02</span>
+              <h2>Analyse IA</h2>
+            </div>
 
-          <label class="field">
-            <span>PDF evolution optionnel</span>
-            <input id="agreement" type="file" accept="application/pdf" />
-          </label>
+            <label class="field">
+              <span>Puissance d'analyse</span>
+              <select id="model-level">
+                <option value="light">Leger</option>
+                <option value="medium" selected>Moyen</option>
+                <option value="strong">Fort</option>
+              </select>
+              <span class="field-hint">Leger est plus rapide, Fort est plus approfondi.</span>
+            </label>
 
-          <label class="field">
-            <span>Documentation projet optionnelle</span>
-            <input id="project-docs" type="file" accept=".pdf,.md,.markdown,application/pdf,text/markdown,text/plain" multiple />
-            <span class="field-hint">PDF ou fichiers Markdown indexes une fois au demarrage.</span>
-          </label>
+            <label class="field">
+              <span>Token GitHub Models</span>
+              <input id="api-token" type="password" autocomplete="off" placeholder="github_pat_..." />
+              <span id="token-hint" class="field-hint">
+                Votre token est envoye au serveur local uniquement pour cet appel.
+              </span>
+            </label>
+          </section>
 
-          <label class="field">
-            <span>Dossier wiki Markdown</span>
-            <input id="project-doc-directory" type="file" webkitdirectory directory multiple />
-            <span class="field-hint">Les chemins relatifs du wiki sont conserves dans l'index.</span>
-          </label>
+          <section class="config-card">
+            <div class="card-heading">
+              <span>03</span>
+              <h2>Contexte projet</h2>
+            </div>
+
+            <label class="field">
+              <span>PDF evolution optionnel</span>
+              <input id="agreement" type="file" accept="application/pdf" />
+            </label>
+
+            <label class="field">
+              <span>Documentation projet optionnelle</span>
+              <input id="project-docs" type="file" accept=".pdf,.md,.markdown,application/pdf,text/markdown,text/plain" multiple />
+              <span class="field-hint">PDF ou fichiers Markdown indexes une fois au demarrage.</span>
+            </label>
+
+            <label class="field">
+              <span>Dossier wiki Markdown</span>
+              <input id="project-doc-directory" type="file" webkitdirectory directory multiple />
+              <span class="field-hint">Les chemins relatifs du wiki sont conserves dans l'index.</span>
+            </label>
+          </section>
 
           <button id="start" type="button">Demarrer la discussion</button>
 
-          <div class="voice-panel" aria-label="Lecture vocale">
+          <section class="config-card voice-panel" aria-label="Lecture vocale">
+            <div class="card-heading">
+              <span>04</span>
+              <h2>Lecture vocale</h2>
+            </div>
+
             <label class="toggle-field">
               <input id="auto-read" type="checkbox" checked />
               <span>Lire les questions</span>
@@ -96,12 +123,20 @@
 
             <button id="preview-voice" class="secondary-action" type="button">Ecouter un extrait</button>
             <button id="stop-voice" class="secondary-action" type="button">Arreter la lecture</button>
-          </div>
+          </section>
 
           <button id="reset" type="button">Reinitialiser</button>
         </aside>
 
         <section class="conversation-panel">
+          <header class="conversation-header">
+            <div>
+              <p class="eyebrow">Atelier de cadrage IA</p>
+              <h2>Discussion</h2>
+            </div>
+            <span class="status-pill">Rapport de maturite disponible apres echange</span>
+          </header>
+
           <div id="blocking-loader" class="blocking-loader" role="status" aria-live="assertive" hidden>
             <div class="loader-card">
               <span class="loader-spinner" aria-hidden="true"></span>
