@@ -187,9 +187,24 @@ h2 {
   gap: 3px;
 }
 
-.field span {
+.field span,
+.field-label-link {
   font-size: 0.7rem;
   font-weight: 850;
+}
+
+.field-label-link {
+  width: fit-content;
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: rgba(216, 255, 240, 0.45);
+  text-underline-offset: 3px;
+}
+
+.field-label-link:hover,
+.field-label-link:focus-visible {
+  color: #d8fff0;
+  text-decoration-color: currentColor;
 }
 
 textarea,

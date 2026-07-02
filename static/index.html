@@ -31,8 +31,8 @@
               <span>Interlocuteur client</span>
               <select id="profile">
                 <option value="sales">Commercial</option>
-                <option value="technical">Technique</option>
-                <option value="boss">Responsable</option>
+                <option value="technical">Developpeur</option>
+                <option value="boss">Responsable produit</option>
               </select>
             </label>
           </section>
@@ -54,7 +54,14 @@
             </label>
 
             <label class="field">
-              <span>Token GitHub Models</span>
+              <a
+                class="field-label-link"
+                href="https://github.com/settings/personal-access-tokens/new?name=CODEV%20GitHub%20Models&user_models=read"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Token GitHub Models
+              </a>
               <input id="api-token" type="password" autocomplete="off" placeholder="github_pat_..." />
               <span id="token-hint" class="field-hint">
                 Votre token est envoye au serveur local uniquement pour cet appel.
@@ -107,7 +114,14 @@
             </label>
 
             <label id="elevenlabs-key-field" class="field" hidden>
-              <span>Cle ElevenLabs</span>
+              <a
+                class="field-label-link"
+                href="https://elevenlabs.io/app/developers/api-keys"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Cle ElevenLabs
+              </a>
               <input id="elevenlabs-api-key" type="password" autocomplete="off" placeholder="sk_..." />
               <span class="field-hint">
                 La liste des voix est chargee avec cette cle.
